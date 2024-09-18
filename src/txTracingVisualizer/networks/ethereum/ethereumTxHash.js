@@ -17,18 +17,6 @@ const ERC20_ABI = [
     "function symbol() view returns (string)"
 ];
 
-async function getTokenDetails(provider, contractAddress) {
-    const contract = new ethers.Contract(contractAddress, ERC20_ABI, provider);
-    try {
-        const name = await contract.name();
-        const symbol = await contract.symbol();
-        return { name, symbol };
-    } catch (error) {
-        console.error(`Error fetching token details for ${contractAddress}:`, error);
-        return { name: 'Unknown', symbol: 'Unknown' }; // Fallback in case of error
-    }
-}
-
 async function fetchTokenTransfersFromTx(txHash) {
     try {
         // Fetch the transaction receipt using Alchemy SDK
