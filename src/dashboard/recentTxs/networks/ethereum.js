@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 export const getEthereumTransactions = async() => {
-  const apiKey = 'D7T3JSPM38H94YS6J37RKZD2GXSS8RCKTG';
+  const apiKey = '';
   const latestBlockUrl = `https://api.etherscan.io/api?module=proxy&action=eth_blockNumber&apikey=${apiKey}`;
   const blockResponse = await axios.get(latestBlockUrl);
   const latestBlock = blockResponse.data.result;
