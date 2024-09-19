@@ -53,16 +53,39 @@ app.use(cors({
 app.use(express.json());
 
 async function fetchAddressDetails(settings, address) {
+    let validTokenAddresses = await fetchTokenList();
     const alchemy = new Alchemy(settings);
     const balances = await alchemy.core.getTokenBalances(address);
     const tokenDetails = [];
     for(const token of balances.tokenBalances) {
         const metadata = await alchemy.core.getTokenMetadata(token.contractAddress);
+        if (!metadata || metadata.decimals === 0 || !metadata.name || !metadata.symbol) {
+            console.log(`Skipping token: ${token.contractAddress}, missing metadata`);
+            continue;
+        }
+        if (!validTokenAddresses.has(token.contractAddress.toLowerCase())) {
+            console.log(`Skipping token: ${token.contractAddress}, not in valid token list`);
+            continue;
+        }
         const readableBalance = ethers.formatUnits(token.tokenBalance, metadata.decimals);
-        tokenDetails.push({tokenBalance: readableBalance, tokenName: metadata.name, tokenSymbol: metadata.symbol});
-        console.log({tokenBalance: readableBalance, tokenName: metadata.name, tokenSymbol: metadata.symbol});
+        console.log(`Token: ${metadata.name} (${metadata.symbol}), Balance: ${readableBalance} ${token.tokenBalance}`);
+        if(parseFloat(readableBalance) > 0) {
+            tokenDetails.push({tokenBalance: readableBalance, tokenName: metadata.name, tokenSymbol: metadata.symbol});
+            console.log({tokenBalance: readableBalance, tokenName: metadata.name, tokenSymbol: metadata.symbol});
+        }
     }
     return(tokenDetails);
+}
+
+async function fetchTokenList() {
+    try {
+        const response = await axios.get('https://tokens.coingecko.com/uniswap/all.json');
+        const tokens = response.data.tokens;
+        return new Set(tokens.map(token => token.address.toLowerCase())); // Store addresses in lowercase for case-insensitive comparison
+    } catch (error) {
+        console.error('Error fetching token list:', error);
+        return new Set(); // Return an empty set on error
+    }
 }
 
 async function fetchWithTimeout(fetchFunction, timeout = 120000) {
@@ -76,6 +99,7 @@ async function fetchWithTimeout(fetchFunction, timeout = 120000) {
         throw new Error('Request timed out');
     }
 }
+
 
 app.post('/fetch-address-details', async (req, res) => {
     const { address } = req.body;
