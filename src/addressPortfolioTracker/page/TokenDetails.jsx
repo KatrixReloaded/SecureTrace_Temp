@@ -9,7 +9,8 @@ const TokenDetails = () => {
     const fetchDetails = async () => {
         try {
             const response = await axios.post('http://localhost:3001/fetch-address-details', { address });
-            setTokenDetails(response.data.tokenDetails);
+            console.log(response.data);
+            setTokenDetails(response.data.tokens);
             setError('');
         } catch (err) {
             setError('Failed to fetch token details');
@@ -28,10 +29,12 @@ const TokenDetails = () => {
             <button onClick={fetchDetails}>Fetch Token Details</button>
             {error && <p>{error}</p>}
             <ul>
-                {tokenDetails.map((token, index) => (
-                    <li key={index}>
-                        {token.balance} {token.name}
-                    </li>
+                {tokenDetails.map((chain) => (
+                    chain.map((token, tokenIndex) => 
+                        <li key={tokenIndex}>
+                            {token.tokenBalance} {token.tokenName}
+                        </li>
+                    )
                 ))}
             </ul>
         </div>
