@@ -8,38 +8,38 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Alchemy settings
+// Alchemy Settings
 const settingsArbitrum = {
     apiKey: process.env.ALCHEMY_APIKEY,
-    network: Network.ARB_MAINNET, // Adjust to the network you are using
+    network: Network.ARB_MAINNET, 
 };
 const settingsEthereum = {
     apiKey: process.env.ALCHEMY_APIKEY,
-    network: Network.ETH_MAINNET, // Adjust to the network you are using
+    network: Network.ETH_MAINNET, 
 };
 const settingsLinea = {
     apiKey: process.env.ALCHEMY_APIKEY,
-    network: Network.LINEA_MAINNET, // Adjust to the network you are using
+    network: Network.LINEA_MAINNET, 
 };
 const settingsAvalanche = {
     apiKey: process.env.ALCHEMY_APIKEY,
-    network: Network.AVAX_MAINNET, // Adjust to the network you are using
+    network: Network.AVAX_MAINNET, 
 };
 const settingsOptimism = {
     apiKey: process.env.ALCHEMY_APIKEY,
-    network: Network.OPT_MAINNET, // Adjust to the network you are using
+    network: Network.OPT_MAINNET, 
 };
 const settingsBlast = {
     apiKey: process.env.ALCHEMY_APIKEY,
-    network: Network.BLAST_MAINNET, // Adjust to the network you are using
+    network: Network.BLAST_MAINNET, 
 };
 const settingsPolygon = {
     apiKey: process.env.ALCHEMY_APIKEY,
-    network: Network.MATIC_MAINNET, // Adjust to the network you are using
+    network: Network.MATIC_MAINNET, 
 };
 const settingsZksync = {
     apiKey: process.env.ALCHEMY_APIKEY,
-    network: Network.ZKSYNC_MAINNET, // Adjust to the network you are using
+    network: Network.ZKSYNC_MAINNET, 
 };
 
 
@@ -49,9 +49,13 @@ app.use(cors({
     allowedHeaders: ['Content-Type']
 }));
 
-// Middleware to parse JSON
+
 app.use(express.json());
 
+/** @dev fetchAddressDetails fetches the address's ERC-20 token assets
+ * @param settings -> alchemy settiings for different chains
+ * @param address -> the address value for which the tokens are being fetched
+ */
 async function fetchAddressDetails(settings, address) {
     let validTokenAddresses = await fetchTokenList();
     const alchemy = new Alchemy(settings);
@@ -77,17 +81,19 @@ async function fetchAddressDetails(settings, address) {
     return(tokenDetails);
 }
 
+/** @dev checks whether the token is a valid/official token and not some bs*/
 async function fetchTokenList() {
     try {
         const response = await axios.get('https://tokens.coingecko.com/uniswap/all.json');
         const tokens = response.data.tokens;
-        return new Set(tokens.map(token => token.address.toLowerCase())); // Store addresses in lowercase for case-insensitive comparison
+        return new Set(tokens.map(token => token.address.toLowerCase())); 
     } catch (error) {
         console.error('Error fetching token list:', error);
-        return new Set(); // Return an empty set on error
+        return new Set(); 
     }
 }
 
+/** @dev just in case we need to set a timeout */
 async function fetchWithTimeout(fetchFunction, timeout = 120000) {
     const abortController = new AbortController();
     const id = setTimeout(() => abortController.abort(), timeout);
@@ -100,7 +106,8 @@ async function fetchWithTimeout(fetchFunction, timeout = 120000) {
     }
 }
 
-
+/** @dev address value is passed here and tokens across multiple chains are checked */
+/** @param req -> req.body == the address passed*/
 app.post('/fetch-address-details', async (req, res) => {
     const { address } = req.body;
 
