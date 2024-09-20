@@ -6,15 +6,19 @@ const TokenTransfers = () => {
     const [address, setAddress] = useState('');
     const [transfers, setTransfers] = useState(null);
     const [error, setError] = useState(null);
+    const [loading, setLoading] = useState(false);
 
     const fetchTransfers = async () => {
+        setLoading(true);
+        setError(null);
         try {
             const response = await axios.get(`http://localhost:3002/token-transfers/${address}`);
             setTransfers(response.data);
-            setError(null);
         } catch (err) {
             setError('An error occurred while fetching token transfers.');
             setTransfers(null);
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -36,6 +40,7 @@ const TokenTransfers = () => {
                 />
                 <button type="submit">Fetch Transfers</button>
             </form>
+            {loading && <p>Loading...</p>}
             {error && <p style={{ color: 'red' }}>{error}</p>}
             {transfers && (
                 <div>
