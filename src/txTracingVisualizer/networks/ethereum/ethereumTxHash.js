@@ -10,7 +10,7 @@ const settings = {
 const alchemy = new Alchemy(settings); // Replace with your Alchemy API key
 const provider = new ethers.JsonRpcProvider(`https://eth-mainnet.g.alchemy.com/v2/${settings.apiKey}`); // Same API key for provider
 
-const transactionHash = '0xb861e6fde20908d3ba0cbb3ed439dc9edc0a389a138210ce9ba7ddfd2b9dee46'; //! needs to be replaced with an ETH txhash
+const transactionHash = '0xc3158e2230934ad492693c748660a9e43f3e9d85534772375edf9f650bb22941'; //! needs to be replaced with an ETH txhash
 const ERC20_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const ERC20_ABI = [
     "function name() view returns (string)",
@@ -64,5 +64,5 @@ async function fetchTokenTransfersFromTx(txHash) {
 
 // Example usage:
 fetchTokenTransfersFromTx(transactionHash).then(transfers => {
-    console.log('All Token Transfers from Polygon Transaction:', transfers);
+    console.log('All Token Transfers from Ethereum Transaction:', transfers);
 });
