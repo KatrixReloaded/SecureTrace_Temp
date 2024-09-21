@@ -12,7 +12,7 @@ const TokenTransfers = () => {
         setLoading(true);
         setError(null);
         try {
-            const response = await axios.get(`http://localhost:3002/token-transfers/${address}`);
+            const response = await axios.get(`http://localhost:3001/token-transfers/${address}`);
             setTransfers(response.data);
         } catch (err) {
             setError('An error occurred while fetching token transfers.');
