@@ -48,6 +48,12 @@ const settingsZksync = {
     network: Network.ZKSYNC_MAINNET, 
 };
 
+const ERC20_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
+const ERC20_ABI = [
+    "function name() view returns (string)",
+    "function symbol() view returns (string)"
+];
+
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST'],
@@ -298,6 +304,88 @@ app.get('/token-transfers/:address', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: 'An error occurred while fetching token transfers' });
   }
+});
+
+
+/** --------------------------------------------------------------------- 
+-------------------------- TRANSACTION TTV ------------------------------
+---------------------------------------------------------------------- */
+
+async function fetchTokenTransfersFromTx(txHash, providerUrl) {
+    try {
+        const receipt = await alchemy.core.getTransactionReceipt(txHash);
+        const provider = ethers.JsonRpcProvider(`${providerUrl}`);
+
+        if (!receipt) {
+            console.error('Transaction not found!');
+            return;
+        }
+
+        console.log(`Found ${receipt.logs.length} logs in the transaction...`);
+
+        const tokenTransfers = receipt.logs.filter(log => log.topics[0] === ERC20_TRANSFER_TOPIC);
+
+        const decodedTransfers = await Promise.all(tokenTransfers.map(async (log) => {
+            const from = ethers.getAddress(log.topics[1].slice(26));
+            const to = ethers.getAddress(log.topics[2].slice(26));
+            const value = BigInt(log.data);
+            const contract = new ethers.Contract(log.address, ERC20_ABI, provider);
+            let name = "";
+            let symbol = "";
+            let decimals = 0;
+            try {
+                name = await contract.name();
+                symbol = await contract.symbol();
+                decimals = await contract.decimals();
+            } catch (error) {
+                console.error(`Error fetching token details for ${log.address}:`, error);
+            }
+
+            return {
+                from,
+                to,
+                value: ethers.formatUnits(value, decimals), // Assuming token with 18 decimals
+                contractAddress: log.address,
+                tokenName: name,
+                tokenSymbol: symbol
+            };
+        }));
+
+        return decodedTransfers;
+    } catch (error) {
+        console.error('Error fetching token transfers:', error);
+    }
+}
+
+app.get('/fetch-transaction-details/:txhash', async (req, res) => {
+    const txhash = req.params.txhash;
+    let allTransfers = [];
+
+    try {
+        console.log("Fetching internal transfers for Ethereum");
+        const ethTransfers = await fetchTokenTransfersFromTx(txhash, `https://eth-mainnet.g.alchemy.com/v2/${settingsEthereum.apiKey}`);
+        allTransfers.push(...ethTransfers);
+        console.log("Fetching internal transfers for Arbitrum");
+        const arbTransfers = await fetchTokenTransfersFromTx(txhash, `https://arb-mainnet.g.alchemy.com/v2/${settingsArbitrum.apiKey}`);
+        allTransfers.push(...arbTransfers);
+        console.log("Fetching internal transfers for Polygon");
+        const polTransfers = await fetchTokenTransfersFromTx(txhash, `https://polygon-mainnet.g.alchemy.com/v2/${settingsPolygon.apiKey}`);
+        allTransfers.push(...polTransfers);
+        console.log("Fetching internal transfers for Optimism");
+        const optTransfers = await fetchTokenTransfersFromTx(txhash, `https://opt-mainnet.g.alchemy.com/v2/${settingsOptimism.apiKey}`);
+        allTransfers.push(...optTransfers);
+        console.log("Fetching internal transfers for zkSync");
+        const zkTransfers = await fetchTokenTransfersFromTx(txhash, `https://zksync-mainnet.g.alchemy.com/v2/${settingsZksync.apiKey}`);
+        allTransfers.push(...zkTransfers);
+        console.log("Fetching internal transfers for Linea");
+        const lineaTransfers = await fetchTokenTransfersFromTx(txhash, `https://linea-mainnet.g.alchemy.com/v2/${settingsLinea.apiKey}`);
+        allTransfers.push(...lineaTransfers);
+        console.log("Fetching internal transfers for Blast");
+        const blastTransfers = await fetchTokenTransfersFromTx(txhash, `https://blast-mainnet.g.alchemy.com/v2/${settingsBlast.apiKey}`);
+        allTransfers.push(...blastTransfers);
+    } catch(error) {
+        res.status(500).json({ error: 'An error occurred while fetching token transfers' });
+    }
 });
 
 app.listen(port, () => {
