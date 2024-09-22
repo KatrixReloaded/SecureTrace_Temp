@@ -48,17 +48,6 @@ const settingsZksync = {
     network: Network.ZKSYNC_MAINNET, 
 };
 
-const chains = {
-    eth: settingsEthereum,
-    arb: settingsArbitrum,
-    avax: settingsAvalanche,
-    blast: settingsBlast,
-    linea: settingsLinea,
-    opt: settingsOptimism,
-    pol: settingsPolygon,
-    zk: settingsZksync,
-}
-
 const ERC20_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const ERC20_ABI = [
     "function name() view returns (string)",
@@ -76,8 +65,23 @@ app.use(express.json());
 
 
 /** ----------------------------------------------------------------------------- 
------------------------------- COMMON FUNCTIONS ---------------------------------
------------------------------------------------------------------------------- */
+ ------------------------------ COMMON FUNCTIONS ---------------------------------
+ ------------------------------------------------------------------------------ */
+ 
+ /** @dev just in case we need to set a timeout 
+  * @param target function to set a timeout for it
+ */
+ async function fetchWithTimeout(fetchFunction, timeout = 120000) {
+     const abortController = new AbortController();
+     const id = setTimeout(() => abortController.abort(), timeout);
+     try {
+         const result = await fetchFunction();
+         clearTimeout(id);
+         return result;
+     } catch (error) {
+         throw new Error('Request timed out');
+     }
+ }
 
 /** @dev checks whether the token is a valid/official token and not some bs*/
 async function fetchTokenList() {
@@ -91,6 +95,13 @@ async function fetchTokenList() {
     }
 }
 
+async function fetchTokenPrice(tokenSymbols) {
+    const ids = tokenSymbols.join(',');
+    const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+    const data = await response.json();
+    return data; // Return price in USD or 0 if not found
+}
+
 
 /** ----------------------------------------------------------------------------- 
 ----------------------------- PORTFOLIO TRACKER ---------------------------------
@@ -101,43 +112,34 @@ async function fetchTokenList() {
  * @param address -> the address value for which the tokens are being fetched
  */
 async function fetchAddressDetails(settings, address) {
-    let validTokenAddresses = await fetchTokenList();
+    const validTokenAddresses = await fetchTokenList();
     const alchemy = new Alchemy(settings);
     const balances = await alchemy.core.getTokenBalances(address);
-    const tokenDetails = [];
+    let tokenDetails = [];
+    const tokenNames = [];
     for(const token of balances.tokenBalances) {
         const metadata = await alchemy.core.getTokenMetadata(token.contractAddress);
         if (!metadata || metadata.decimals === 0 || !metadata.name || !metadata.symbol) {
-            console.log(`Skipping token: ${token.contractAddress}, missing metadata`);
             continue;
         }
         if (!validTokenAddresses.has(token.contractAddress.toLowerCase())) {
-            console.log(`Skipping token: ${token.contractAddress}, not in valid token list`);
             continue;
         }
         const readableBalance = ethers.formatUnits(token.tokenBalance, metadata.decimals);
-        console.log(`Token: ${metadata.name} (${metadata.symbol}), Balance: ${readableBalance} ${token.tokenBalance}`);
         if(parseFloat(readableBalance) > 0) {
-            tokenDetails.push({tokenBalance: readableBalance, tokenName: metadata.name, tokenSymbol: metadata.symbol});
-            console.log({tokenBalance: readableBalance, tokenName: metadata.name, tokenSymbol: metadata.symbol});
+            const tokenName = metadata.name.toLowerCase().replace(/\s+/g, '-');
+            console.log("Token Name", tokenName);
+            tokenNames.push(tokenName);
+            tokenDetails.push({tokenBalance: readableBalance, tokenName: metadata.name, tokenSymbol: metadata.symbol, tokenPrice: 0});
         }
     }
+    const tokenPrices = await fetchTokenPrice(tokenNames);
+    Object.values(tokenDetails).forEach(token => {
+        const tokenName = token.tokenName.toLowerCase().replace(/\s+/g, '-');
+        token.tokenPrice = tokenPrices[tokenName] ? tokenPrices[tokenName].usd : 0;
+        console.log(token.tokenName, token.tokenSymbol, token.tokenPrice, token.tokenBalance);
+    });
     return(tokenDetails);
-}
-
-/** @dev just in case we need to set a timeout 
- * @param target function to set a timeout for it
-*/
-async function fetchWithTimeout(fetchFunction, timeout = 120000) {
-    const abortController = new AbortController();
-    const id = setTimeout(() => abortController.abort(), timeout);
-    try {
-        const result = await fetchFunction();
-        clearTimeout(id);
-        return result;
-    } catch (error) {
-        throw new Error('Request timed out');
-    }
 }
 
 /** @dev address value is passed here and tokens across multiple chains are checked */
@@ -150,14 +152,14 @@ app.post('/fetch-address-details', async (req, res) => {
     }
     let tokens = [];
     try {
+        console.log("Fetching eth assets");
+        tokens.push(await fetchAddressDetails(settingsEthereum, address));
         console.log("Fetching arb assets");
         tokens.push(await fetchAddressDetails(settingsArbitrum, address));
         console.log("Fetching avax assets");
         tokens.push(await fetchAddressDetails(settingsAvalanche, address));
         console.log("Fetching blast assets");
         tokens.push(await fetchAddressDetails(settingsBlast, address));
-        console.log("Fetching eth assets");
-        tokens.push(await fetchAddressDetails(settingsEthereum, address));
         console.log("Fetching linea assets");
         // tokens.push(await fetchAddressDetails(settingsLinea, address));
         console.log("Fetching opt assets");
@@ -178,91 +180,40 @@ app.post('/fetch-address-details', async (req, res) => {
 -------------------------------- ADDRESS TTV ------------------------------------
 ------------------------------------------------------------------------------ */
 
-/** @dev function to fetch all transfers made out from the given address
+/** @dev function to fetch all transfers made out from and into the given address
  * @param settings -> alchemy settings for different chains
- * @param address -> the address value from which the transfers have been made
+ * @param address -> the address value for which the transfers need to be checked
  */
-// async function tokenTransfersFrom(settings, address) {
-//     const alchemy = new Alchemy(settings);
-//     let validTokenAddresses = await fetchTokenList();
-
-//     const fromTransfers = await alchemy.core.getAssetTransfers({
-//         fromBlock: '0x0',
-//         toBlock: 'latest',
-//         fromAddress: address,
-//         // category: ['erc20', 'external'],
-//         category: ['erc20'],
-//         withMetadata: true,
-//         excludeZeroValue: true,
-//         maxCount: 100, 
-//     });
-
-//     // Filtering out the invalid/unofficial/shit tokens in legitFromTransfers
-//     const legitFromTransfers = fromTransfers.transfers.filter(tx => {
-//         if(tx.category === 'erc20') {
-//             return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
-//         } else if(tx.category === 'external') {
-//             return true;
-//         }
-//         return false;
-//     });
-
-//     console.log("From Transfers");
-//     return({
-//         fromTransfers: legitFromTransfers,
-//     });
-// }
-
-// /** @dev function to fetch transfers made to the given address
-//  * @param settings -> alchemy settings for different chains
-//  * @param address -> the address value to which the transfers have been made
-//  */
-// async function tokenTransfersTo(settings, address) {
-//     const alchemy = new Alchemy(settings);
-//     let validTokenAddresses = await fetchTokenList();
-
-//     const toTransfers = await alchemy.core.getAssetTransfers({
-//         fromBlock: '0x0',
-//         toBlock: 'latest',
-//         toAddress: address,
-//         // category: ['erc20', 'external'],
-//         category: ['erc20'],
-//         withMetadata: true,
-//         excludeZeroValue: true,
-//         maxCount: 100, 
-//     });
-
-//     // Filtering out the invalid/unofficial/shit tokens in legitToTransfers
-//     const legitToTransfers = toTransfers.transfers.filter(tx => {
-//         if(tx.category === 'erc20') {
-//             return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
-//         } else if(tx.category === 'external') {
-//             return true;
-//         }
-//         return false;
-//     });
-
-//     console.log("To Transfers");
-//     return({
-//         toTransfers: legitToTransfers,
-//     });
-// }
-
 async function tokenTransfers(settings, address) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
-    const fetchTransfers = async (direction) => {
-        const transfers = await alchemy.core.getAssetTransfers({
-            fromBlock: '0x0',
-            toBlock: 'latest',
-            [direction === 'from' ? 'fromAddress' : 'toAddress']: address,
-            category: ['erc20'],
-            withMetadata: true,
-            excludeZeroValue: true,
-            maxCount: 100,
-        }).transfers;
 
-        return transfers.filter(tx => {
+    const fetchTransfers = async (direction) => {
+        let transfers = {};
+
+        if(direction === 'from') {
+            transfers = await alchemy.core.getAssetTransfers({
+                fromBlock: '0x0',
+                toBlock: 'latest',
+                fromAddress: address,
+                category: ['erc20'],
+                withMetadata: true,
+                excludeZeroValue: true,
+                maxCount: 100,
+            });
+        } else {
+            transfers = await alchemy.core.getAssetTransfers({
+                fromBlock: '0x0',
+                toBlock: 'latest',
+                toAddress: address,
+                category: ['erc20'],
+                withMetadata: true,
+                excludeZeroValue: true,
+                maxCount: 100,
+            });
+        }
+
+        return transfers.transfers.filter(tx => {
             if (tx.category === 'erc20') {
                 return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
             } else if (tx.category === 'external') {
@@ -290,14 +241,21 @@ async function tokenTransfers(settings, address) {
  */
 app.get('/token-transfers/:address', async (req, res) => {
     const address = req.params.address;
+    const chains = {
+        eth: settingsEthereum,
+        arb: settingsArbitrum,
+        opt: settingsOptimism,
+        pol: settingsPolygon,
+        zk: settingsZksync,
+    }
     const allFromTransfers = [];
     const allToTransfers = [];
 
     try {
-        console.log("Fetching address transfers");
-        const allTransfers = await Promise.all(chains.map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address)));
-        allFromTransfers = allTransfers.map(transfers => transfers.fromTransfers);
-        allToTransfers = allTransfers.map(transfers => transfers.toTransfers);
+        const allTransfers = await Promise.all(Object.values(chains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address)));
+        console.log("Transfers mapped \n", allTransfers);
+        Object.values(allTransfers).forEach(transfers => allFromTransfers.push(transfers.fromTransfers));
+        Object.values(allTransfers).forEach(transfers => allToTransfers.push(transfers.toTransfers));
 
         res.json({
             from: allFromTransfers,
