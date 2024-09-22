@@ -107,6 +107,8 @@ async function fetchTokenPrice(tokenSymbols) {
 ----------------------------- PORTFOLIO TRACKER ---------------------------------
 ------------------------------------------------------------------------------ */
 
+/// @note Add native tokens as well
+/// @note fetch USD values
 /** @dev fetchAddressDetails fetches the address's ERC-20 token assets
  * @param settings -> alchemy settiings for different chains
  * @param address -> the address value for which the tokens are being fetched
@@ -142,6 +144,7 @@ async function fetchAddressDetails(settings, address) {
     return(tokenDetails);
 }
 
+/// @note optimize code
 /** @dev address value is passed here and tokens across multiple chains are checked */
 /** @param req -> req.body == the address passed*/
 app.post('/fetch-address-details', async (req, res) => {
@@ -180,6 +183,8 @@ app.post('/fetch-address-details', async (req, res) => {
 -------------------------------- ADDRESS TTV ------------------------------------
 ------------------------------------------------------------------------------ */
 
+/// @note fetch USD values
+/// @note see what you can do for Algorand, Linea and Avalanche
 /** @dev function to fetch all transfers made out from and into the given address
  * @param settings -> alchemy settings for different chains
  * @param address -> the address value for which the transfers need to be checked
@@ -271,6 +276,7 @@ app.get('/token-transfers/:address', async (req, res) => {
 ------------------------------ TRANSACTION TTV ----------------------------------
 ------------------------------------------------------------------------------ */
 
+///@note fetch USD values
 async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
     try {
         const provider = new ethers.JsonRpcProvider(`${providerUrl}`);
@@ -377,6 +383,40 @@ app.get('/fetch-transaction-details/:txhash', async (req, res) => {
     }
 });
 
+
+/** -----------------------------------------------------------------------------
+ * ----------------------------- RECENT TXS TABLE -------------------------------
+ * --------------------------------------------------------------------------- */
+
+async function recentTxs(settings) {
+    const alchemy = new Alchemy(settings);
+    const txs = await alchemy.core.getAssetTransfers({
+        fromBlock: 'latest',
+        category: ['erc20', 'external'],
+        withMetadata: true,
+        excludeZeroValue: true,
+        maxCount: 100,
+    });
+    return txs;
+}
+
+app.get('/recent-txs', async (req, res) => {
+    try {
+        const chains = {
+            eth: settingsEthereum,
+            arb: settingsArbitrum,
+            opt: settingsOptimism,
+            pol: settingsPolygon,
+            zk: settingsZksync,
+        };
+        const allTransfers = await Promise.all(Object.values(chains).map(chain => recentTxs({apiKey: chain.apiKey, network: chain.network})));
+        res.json({txs: allTransfers});
+    } catch(error) {
+        res.status(500).json({ error: 'An error occurred while fetching recent transactions' });
+    }
+});
+
+/// @note add balance history
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
