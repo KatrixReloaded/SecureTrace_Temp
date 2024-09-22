@@ -6,9 +6,9 @@ const { ethers } = require('ethers');
 const cors = require('cors');
 
 
-/** --------------------------------------------------------------------- 
--------------------------  GLOBAL VARIABLES -----------------------------
----------------------------------------------------------------------- */
+/** ----------------------------------------------------------------------------- 
+-----------------------------  GLOBAL VARIABLES ---------------------------------
+------------------------------------------------------------------------------ */
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -48,6 +48,17 @@ const settingsZksync = {
     network: Network.ZKSYNC_MAINNET, 
 };
 
+const chains = {
+    eth: settingsEthereum,
+    arb: settingsArbitrum,
+    avax: settingsAvalanche,
+    blast: settingsBlast,
+    linea: settingsLinea,
+    opt: settingsOptimism,
+    pol: settingsPolygon,
+    zk: settingsZksync,
+}
+
 const ERC20_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const ERC20_ABI = [
     "function name() view returns (string)",
@@ -64,9 +75,9 @@ app.use(cors({
 app.use(express.json());
 
 
-/** --------------------------------------------------------------------- 
--------------------------- COMMON FUNCTIONS -----------------------------
----------------------------------------------------------------------- */
+/** ----------------------------------------------------------------------------- 
+------------------------------ COMMON FUNCTIONS ---------------------------------
+------------------------------------------------------------------------------ */
 
 /** @dev checks whether the token is a valid/official token and not some bs*/
 async function fetchTokenList() {
@@ -81,9 +92,9 @@ async function fetchTokenList() {
 }
 
 
-/** --------------------------------------------------------------------- 
-------------------------- PORTFOLIO TRACKER -----------------------------
----------------------------------------------------------------------- */
+/** ----------------------------------------------------------------------------- 
+----------------------------- PORTFOLIO TRACKER ---------------------------------
+------------------------------------------------------------------------------ */
 
 /** @dev fetchAddressDetails fetches the address's ERC-20 token assets
  * @param settings -> alchemy settiings for different chains
@@ -163,165 +174,148 @@ app.post('/fetch-address-details', async (req, res) => {
 });
 
 
-/** --------------------------------------------------------------------- 
----------------------------- ADDRESS TTV --------------------------------
----------------------------------------------------------------------- */
+/** ----------------------------------------------------------------------------- 
+-------------------------------- ADDRESS TTV ------------------------------------
+------------------------------------------------------------------------------ */
 
 /** @dev function to fetch all transfers made out from the given address
  * @param settings -> alchemy settings for different chains
  * @param address -> the address value from which the transfers have been made
  */
-async function tokenTransfersFrom(settings, address) {
+// async function tokenTransfersFrom(settings, address) {
+//     const alchemy = new Alchemy(settings);
+//     let validTokenAddresses = await fetchTokenList();
+
+//     const fromTransfers = await alchemy.core.getAssetTransfers({
+//         fromBlock: '0x0',
+//         toBlock: 'latest',
+//         fromAddress: address,
+//         // category: ['erc20', 'external'],
+//         category: ['erc20'],
+//         withMetadata: true,
+//         excludeZeroValue: true,
+//         maxCount: 100, 
+//     });
+
+//     // Filtering out the invalid/unofficial/shit tokens in legitFromTransfers
+//     const legitFromTransfers = fromTransfers.transfers.filter(tx => {
+//         if(tx.category === 'erc20') {
+//             return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
+//         } else if(tx.category === 'external') {
+//             return true;
+//         }
+//         return false;
+//     });
+
+//     console.log("From Transfers");
+//     return({
+//         fromTransfers: legitFromTransfers,
+//     });
+// }
+
+// /** @dev function to fetch transfers made to the given address
+//  * @param settings -> alchemy settings for different chains
+//  * @param address -> the address value to which the transfers have been made
+//  */
+// async function tokenTransfersTo(settings, address) {
+//     const alchemy = new Alchemy(settings);
+//     let validTokenAddresses = await fetchTokenList();
+
+//     const toTransfers = await alchemy.core.getAssetTransfers({
+//         fromBlock: '0x0',
+//         toBlock: 'latest',
+//         toAddress: address,
+//         // category: ['erc20', 'external'],
+//         category: ['erc20'],
+//         withMetadata: true,
+//         excludeZeroValue: true,
+//         maxCount: 100, 
+//     });
+
+//     // Filtering out the invalid/unofficial/shit tokens in legitToTransfers
+//     const legitToTransfers = toTransfers.transfers.filter(tx => {
+//         if(tx.category === 'erc20') {
+//             return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
+//         } else if(tx.category === 'external') {
+//             return true;
+//         }
+//         return false;
+//     });
+
+//     console.log("To Transfers");
+//     return({
+//         toTransfers: legitToTransfers,
+//     });
+// }
+
+async function tokenTransfers(settings, address) {
     const alchemy = new Alchemy(settings);
-    let validTokenAddresses = await fetchTokenList();
+    const validTokenAddresses = await fetchTokenList();
+    const fetchTransfers = async (direction) => {
+        const transfers = await alchemy.core.getAssetTransfers({
+            fromBlock: '0x0',
+            toBlock: 'latest',
+            [direction === 'from' ? 'fromAddress' : 'toAddress']: address,
+            category: ['erc20'],
+            withMetadata: true,
+            excludeZeroValue: true,
+            maxCount: 100,
+        }).transfers;
 
-    const fromTransfers = await alchemy.core.getAssetTransfers({
-        fromBlock: '0x0',
-        toBlock: 'latest',
-        fromAddress: address,
-        // category: ['erc20', 'external'],
-        category: ['erc20'],
-        withMetadata: true,
-        excludeZeroValue: true,
-        maxCount: 100, 
-    });
+        return transfers.filter(tx => {
+            if (tx.category === 'erc20') {
+                return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
+            } else if (tx.category === 'external') {
+                return true;
+            }
+            return false;
+        });
+    };
 
-    // Filtering out the invalid/unofficial/shit tokens in legitFromTransfers
-    const legitFromTransfers = fromTransfers.transfers.filter(tx => {
-        if(tx.category === 'erc20') {
-            return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
-        } else if(tx.category === 'external') {
-            return true;
-        }
-        return false;
-    });
+    const [fromTransfers, toTransfers] = await Promise.all([
+        fetchTransfers('from'),
+        fetchTransfers('to'),
+    ]);
 
     console.log("From Transfers");
-    return({
-        fromTransfers: legitFromTransfers,
-    });
-}
-
-/** @dev function to fetch transfers made to the given address
- * @param settings -> alchemy settings for different chains
- * @param address -> the address value to which the transfers have been made
- */
-async function tokenTransfersTo(settings, address) {
-    const alchemy = new Alchemy(settings);
-    let validTokenAddresses = await fetchTokenList();
-
-    const toTransfers = await alchemy.core.getAssetTransfers({
-        fromBlock: '0x0',
-        toBlock: 'latest',
-        toAddress: address,
-        // category: ['erc20', 'external'],
-        category: ['erc20'],
-        withMetadata: true,
-        excludeZeroValue: true,
-        maxCount: 100, 
-    });
-
-    // Filtering out the invalid/unofficial/shit tokens in legitToTransfers
-    const legitToTransfers = toTransfers.transfers.filter(tx => {
-        if(tx.category === 'erc20') {
-            return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
-        } else if(tx.category === 'external') {
-            return true;
-        }
-        return false;
-    });
-
     console.log("To Transfers");
-    return({
-        toTransfers: legitToTransfers,
-    });
+    return {
+        fromTransfers,
+        toTransfers,
+    };
 }
 
 /** @dev address value is passed here to fetch all to and from transfer of tokens from that address
  * @param req -> req.params.address == the address passed
  */
 app.get('/token-transfers/:address', async (req, res) => {
-  const address = req.params.address;
-  const allFromTransfers = [];
+    const address = req.params.address;
+    const allFromTransfers = [];
     const allToTransfers = [];
 
     try {
-        console.log('Fetching transfers for Ethereum');
-        const ethFromTransfers = await tokenTransfersFrom(settingsEthereum, address);
-        console.log("Eth from transfers", ethFromTransfers.fromTransfers);
-        const ethToTransfers = await tokenTransfersTo(settingsEthereum, address);
-        console.log("Eth to transfers", ethToTransfers.toTransfers);
-        allFromTransfers.push(...ethFromTransfers.fromTransfers);
-        allToTransfers.push(...ethToTransfers.toTransfers);
+        console.log("Fetching address transfers");
+        const allTransfers = await Promise.all(chains.map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address)));
+        allFromTransfers = allTransfers.map(transfers => transfers.fromTransfers);
+        allToTransfers = allTransfers.map(transfers => transfers.toTransfers);
 
-        console.log('Fetching transfers for Arbitrum');
-        const arbFromTransfers = await tokenTransfersFrom(settingsArbitrum, address);
-        const arbToTransfers = await tokenTransfersTo(settingsArbitrum, address);
-        allFromTransfers.push(...arbFromTransfers.fromTransfers);
-        allToTransfers.push(...arbToTransfers.toTransfers);
-        
-        /* ---------- getAssetTransfers() DOES NOT SUPPORT THESE CHAINS ---------- */
-
-        // console.log('Fetching transfers for Avalanche');
-        // const avaxFromTransfers = await tokenTransfersFrom(settingsAvalanche, address);
-        // const avaxToTransfers = await tokenTransfersTo(settingsAvalanche, address);
-        // allFromTransfers.push(...avaxFromTransfers.fromTransfers);
-        // allToTransfers.push(...avaxToTransfers.toTransfers);
-
-        // console.log('Fetching transfers for Blast');
-        // const blastFromTransfers = await tokenTransfersFrom(settingsBlast, address);
-        // const blastToTransfers = await tokenTransfersTo(settingsBlast, address);
-        // allFromTransfers.push(...blastFromTransfers.fromTransfers.transfers);
-        // allToTransfers.push(...blastToTransfers.toTransfers.transfers);
-
-        // console.log('Fetching transfers for Linea');
-        // const lineaFromTransfers = await tokenTransfersFrom(settingsLinea, address);
-        // const lineaToTransfers = await tokenTransfersTo(settingsLinea, address);
-        // allFromTransfers.push(...lineaFromTransfers.fromTransfers);
-        // allToTransfers.push(...lineaToTransfers.toTransfers);
-
-        console.log('Fetching transfers for Optimism');
-        const optFromTransfers = await tokenTransfersFrom(settingsOptimism, address);
-        const optToTransfers = await tokenTransfersTo(settingsOptimism, address);
-        allFromTransfers.push(...optFromTransfers.fromTransfers);
-        allToTransfers.push(...optToTransfers.toTransfers);
-
-        console.log('Fetching transfers for Polygon');
-        const polyFromTransfers = await tokenTransfersFrom(settingsPolygon, address);
-        const polyToTransfers = await tokenTransfersTo(settingsPolygon, address);
-        allFromTransfers.push(...polyFromTransfers.fromTransfers);
-        allToTransfers.push(...polyToTransfers.toTransfers);
-
-        console.log('Fetching transfers for zkSync');
-        const zkFromTransfers = await tokenTransfersFrom(settingsZksync, address);
-        const zkToTransfers = await tokenTransfersTo(settingsZksync, address);
-        allFromTransfers.push(...zkFromTransfers.fromTransfers);
-        allToTransfers.push(...zkToTransfers.toTransfers);
-
-    res.json({
-        from: allFromTransfers,
-        to: allToTransfers,
-    });    
-  } catch (error) {
-    res.status(500).json({ error: 'An error occurred while fetching token transfers' });
-  }
+        res.json({
+            from: allFromTransfers,
+            to: allToTransfers,
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'An error occurred while fetching token transfers' });
+    }
 });
 
 
-/** --------------------------------------------------------------------- 
--------------------------- TRANSACTION TTV ------------------------------
----------------------------------------------------------------------- */
+/** ----------------------------------------------------------------------------- 
+------------------------------ TRANSACTION TTV ----------------------------------
+------------------------------------------------------------------------------ */
 
 async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
     try {
         const provider = new ethers.JsonRpcProvider(`${providerUrl}`);
-        // if(await provider.getTransaction(txHash)) {
-        //     console.log("Transaction found");
-        // } else {
-        //     console.log("Tx not found");
-        //     return;
-        // }
-        
         const alchemy = new Alchemy(settings);
         const receipt = await alchemy.core.getTransactionReceipt(txHash);
 
