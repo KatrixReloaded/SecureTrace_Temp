@@ -32,7 +32,7 @@ const TokenDetails = () => {
                 {tokenDetails.map((chain) => (
                     chain.map((token, tokenIndex) => 
                         <li key={tokenIndex}>
-                            {token.tokenBalance} {token.tokenName}
+                            {token.tokenBalance} {token.tokenName} Value: {token.value} USD: {token.tokenPrice}
                         </li>
                     )
                 ))}
