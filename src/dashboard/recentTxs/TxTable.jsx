@@ -33,7 +33,6 @@ const RecentTransactions = () => {
             <table>
                 <thead>
                     <tr>
-                        <th>Chain</th>
                         <th>Transaction Hash</th>
                         <th>From</th>
                         <th>To</th>
