@@ -390,14 +390,24 @@ app.get('/fetch-transaction-details/:txhash', async (req, res) => {
 
 async function recentTxs(settings) {
     const alchemy = new Alchemy(settings);
+    const validTokenAddresses = await fetchTokenList();
     const txs = await alchemy.core.getAssetTransfers({
         fromBlock: 'latest',
         category: ['erc20', 'external'],
         withMetadata: true,
         excludeZeroValue: true,
-        maxCount: 100,
+        maxCount: 50,
     });
-    return txs;
+    const filteredTxs = txs.transfers.filter(tx => {
+        if (tx.category === 'erc20') {
+            return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
+        } else if (tx.category === 'external') {
+            return true;
+        }
+        return false;
+    });
+    console.log("Txs fetched");
+    return filteredTxs;
 }
 
 app.get('/recent-txs', async (req, res) => {
@@ -410,6 +420,7 @@ app.get('/recent-txs', async (req, res) => {
             zk: settingsZksync,
         };
         const allTransfers = await Promise.all(Object.values(chains).map(chain => recentTxs({apiKey: chain.apiKey, network: chain.network})));
+        console.log(allTransfers);
         res.json({txs: allTransfers});
     } catch(error) {
         res.status(500).json({ error: 'An error occurred while fetching recent transactions' });
