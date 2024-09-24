@@ -95,11 +95,49 @@ async function fetchTokenList() {
     }
 }
 
-async function fetchTokenPrice(tokenSymbols) {
-    const ids = tokenSymbols.join(',');
-    const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
-    const data = await response.json();
-    return data; // Return price in USD or 0 if not found
+async function fetchTokenPrices(tokenIds) {
+    const ids = tokenIds.join(',');
+
+    try {
+        const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+
+        // Check if the response status is 429
+        if (response.status === 429) {
+            console.error('Rate limit exceeded. Please wait before making more requests.');
+            // Implement a delay before retrying
+            await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+            return fetchTokenPrices(tokenIds); // Retry fetching prices
+        }
+
+        if (!response.ok) {
+            throw new Error(`Error fetching prices: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        return data; // Return price data
+    } catch (error) {
+        console.error('Error fetching token prices:', error);
+        return {}; // Return an empty object or handle it as needed
+    }
+}
+
+async function fetchTokenData() {
+    try {
+        const response = await axios.get('https://api.coingecko.com/api/v3/coins/list');
+        return response.data.map(token => ({
+            name: token.name.toLowerCase(),
+            id: token.id
+        }));
+    } catch (error) {
+        if (error.response && error.response.status === 429) {
+            console.error('Rate limit exceeded. Please wait before making more requests.');
+            // Optionally implement a delay here
+            await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+            return fetchTokenData(); // Retry fetching the data
+        }
+        console.error('Error fetching token list:', error);
+        return [];
+    }
 }
 
 
@@ -115,10 +153,12 @@ async function fetchTokenPrice(tokenSymbols) {
  */
 async function fetchAddressDetails(settings, address) {
     const validTokenAddresses = await fetchTokenList();
+    const tokenNameToId = await fetchTokenData();
     const alchemy = new Alchemy(settings);
     const balances = await alchemy.core.getTokenBalances(address);
     let tokenDetails = [];
-    const tokenNames = [];
+    const tokenIds = [];
+
     for(const token of balances.tokenBalances) {
         const metadata = await alchemy.core.getTokenMetadata(token.contractAddress);
         if (!metadata || metadata.decimals === 0 || !metadata.name || !metadata.symbol) {
@@ -127,50 +167,52 @@ async function fetchAddressDetails(settings, address) {
         if (!validTokenAddresses.has(token.contractAddress.toLowerCase())) {
             continue;
         }
+        const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
+        if(!tokenId) {
+            continue;
+        }
+        console.log("Token found", tokenId.id);
         const readableBalance = ethers.formatUnits(token.tokenBalance, metadata.decimals);
         if(parseFloat(readableBalance) > 0) {
-            const tokenName = metadata.name.toLowerCase().replace(/\s+/g, '-');
-            console.log("Token Name", tokenName);
-            tokenNames.push(tokenName);
-            tokenDetails.push({tokenBalance: readableBalance, tokenName: metadata.name, tokenSymbol: metadata.symbol, tokenPrice: 0});
+            tokenIds.push(tokenId.id);
+            tokenDetails.push({
+                tokenBalance: readableBalance, 
+                tokenName: metadata.name, 
+                tokenSymbol: metadata.symbol, 
+                tokenId: tokenId.id,
+                tokenPrice: 0});
         }
     }
-    const tokenPrices = await fetchTokenPrice(tokenNames);
+
+    const tokenPrices = await fetchTokenPrices(tokenIds);
+    console.log(tokenPrices);
     Object.values(tokenDetails).forEach(token => {
-        const tokenName = token.tokenName.toLowerCase().replace(/\s+/g, '-');
-        token.tokenPrice = tokenPrices[tokenName] ? tokenPrices[tokenName].usd : 0;
-        console.log(token.tokenName, token.tokenSymbol, token.tokenPrice, token.tokenBalance);
+        const tokenId = token.tokenId;
+        token.tokenPrice = tokenPrices[tokenId] ? tokenPrices[tokenId].usd : 0;
+        console.log(token.tokenName, token.tokenBalance, token.tokenSymbol, token.tokenPrice, "USD");
     });
     return(tokenDetails);
 }
 
-/// @note optimize code
 /** @dev address value is passed here and tokens across multiple chains are checked */
 /** @param req -> req.body == the address passed*/
 app.post('/fetch-address-details', async (req, res) => {
     const { address } = req.body;
+    const chains = {
+        eth: settingsEthereum,
+        arb: settingsArbitrum,
+        opt: settingsOptimism,
+        pol: settingsPolygon,
+        zk: settingsZksync,
+        avax: settingsAvalanche,
+        blast: settingsBlast,
+    }
 
     if (!address) {
         return res.status(400).json({ error: 'Address is required' });
     }
-    let tokens = [];
     try {
-        console.log("Fetching eth assets");
-        tokens.push(await fetchAddressDetails(settingsEthereum, address));
-        console.log("Fetching arb assets");
-        tokens.push(await fetchAddressDetails(settingsArbitrum, address));
-        console.log("Fetching avax assets");
-        tokens.push(await fetchAddressDetails(settingsAvalanche, address));
-        console.log("Fetching blast assets");
-        tokens.push(await fetchAddressDetails(settingsBlast, address));
-        console.log("Fetching linea assets");
-        // tokens.push(await fetchAddressDetails(settingsLinea, address));
-        console.log("Fetching opt assets");
-        tokens.push(await fetchAddressDetails(settingsOptimism, address));
-        console.log("Fetching pol assets");
-        tokens.push(await fetchAddressDetails(settingsPolygon, address));
-        console.log("Fetching zk assets");
-        tokens.push(await fetchAddressDetails(settingsZksync, address));
+        const tokens = await Promise.all(Object.values(chains).map(chain => fetchAddressDetails({apiKey: chain.apiKey, network: chain.network}, address)));
         res.json({ tokens });
     } catch (error) {
         console.error('Error fetching address details:', error);
@@ -220,7 +262,8 @@ async function tokenTransfers(settings, address) {
 
         return transfers.transfers.filter(tx => {
             if (tx.category === 'erc20') {
-                return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
+                const isValidToken = validTokenAddresses.some(token => token.address === tx.rawContract.address.toLowerCase());
+                return isValidToken;
             } else if (tx.category === 'external') {
                 return true;
             }
