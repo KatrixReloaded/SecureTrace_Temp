@@ -4,6 +4,7 @@ require('dotenv').config();
 const { Alchemy, Network } = require('alchemy-sdk');
 const { ethers } = require('ethers');
 const cors = require('cors');
+const mysql = require('mysql2/promise');
 
 
 /** ----------------------------------------------------------------------------- 
@@ -12,6 +13,13 @@ const cors = require('cors');
 
 const app = express();
 const port = process.env.PORT || 3001;
+
+const dbConfig = {
+    host: 'localhost',
+    user: 'root',
+    password: 'SQLkatrix1004@',
+    database: 'tokenDB',
+};
 
 const settingsArbitrum = {
     apiKey: process.env.ALCHEMY_APIKEY,
@@ -63,6 +71,9 @@ app.use(cors({
 
 app.use(express.json());
 
+let validTokenAddresses;
+let tokenNameToId;
+
 
 /** ----------------------------------------------------------------------------- 
  ------------------------------ COMMON FUNCTIONS ---------------------------------
@@ -85,13 +96,19 @@ app.use(express.json());
 
 /** @dev checks whether the token is a valid/official token and not some bs*/
 async function fetchTokenList() {
+    const connection = await mysql.createConnection(dbConfig);
     try {
-        const response = await axios.get('https://tokens.coingecko.com/uniswap/all.json');
-        const tokens = response.data.tokens;
-        return new Set(tokens.map(token => token.address.toLowerCase())); 
+        if(!validTokenAddresses){
+            const [rows] = await connection.execute('SELECT address FROM tokens');
+            return new Set(rows.map(token => token.address.toLowerCase()));
+        } else {
+            return validTokenAddresses;
+        }
     } catch (error) {
-        console.error('Error fetching token list:', error);
+        console.error('Error fetching token list from database:', error);
         return new Set(); 
+    } finally {
+        await connection.end(); // Ensure the connection is closed
     }
 }
 
@@ -122,23 +139,43 @@ async function fetchTokenPrices(tokenIds) {
 }
 
 async function fetchTokenData() {
+    const connection = await mysql.createConnection(dbConfig);
     try {
-        const response = await axios.get('https://api.coingecko.com/api/v3/coins/list');
-        return response.data.map(token => ({
-            name: token.name.toLowerCase(),
-            id: token.id
-        }));
-    } catch (error) {
-        if (error.response && error.response.status === 429) {
-            console.error('Rate limit exceeded. Please wait before making more requests.');
-            // Optionally implement a delay here
-            await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
-            return fetchTokenData(); // Retry fetching the data
+        if(!tokenNameToId) {
+            const [rows] = await connection.execute('SELECT name, id FROM tokens');
+            return rows.map(token => ({
+                name: token.name.toLowerCase(),
+                id: token.id
+            }));
+        } else {
+            return tokenNameToId;
         }
-        console.error('Error fetching token list:', error);
+    } catch (error) {
+        console.error('Error fetching token data from database:', error);
         return [];
+    } finally {
+        await connection.end(); // Ensure the connection is closed
     }
 }
+
+// async function fetchTokenData() {
+//     try {
+//         const response = await axios.get('https://api.coingecko.com/api/v3/coins/list');
+//         return response.data.map(token => ({
+//             name: token.name.toLowerCase(),
+//             id: token.id
+//         }));
+//     } catch (error) {
+//         if (error.response && error.response.status === 429) {
+//             console.error('Rate limit exceeded. Please wait before making more requests.');
+//             // Optionally implement a delay here
+//             await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+//             return fetchTokenData(); // Retry fetching the data
+//         }
+//         console.error('Error fetching token list:', error);
+//         return [];
+//     }
+// }
 
 
 /** ----------------------------------------------------------------------------- 
@@ -146,7 +183,6 @@ async function fetchTokenData() {
 ------------------------------------------------------------------------------ */
 
 /// @note Add native tokens as well
-/// @note fetch USD values
 /** @dev fetchAddressDetails fetches the address's ERC-20 token assets
  * @param settings -> alchemy settiings for different chains
  * @param address -> the address value for which the tokens are being fetched
@@ -226,7 +262,7 @@ app.post('/fetch-address-details', async (req, res) => {
 ------------------------------------------------------------------------------ */
 
 /// @note fetch USD values
-/// @note see what you can do for Algorand, Linea and Avalanche
+/// @note see what you can do for Linea and Avalanche
 /** @dev function to fetch all transfers made out from and into the given address
  * @param settings -> alchemy settings for different chains
  * @param address -> the address value for which the transfers need to be checked
@@ -470,7 +506,7 @@ app.get('/recent-txs', async (req, res) => {
     }
 });
 
-/// @note add balance history
+/// @note add balance history, figure out how you can fetch the data once you click on a token value
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
