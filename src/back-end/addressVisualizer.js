@@ -14,6 +14,7 @@ const mysql = require('mysql2/promise');
 const app = express();
 const port = process.env.PORT || 3001;
 
+/** @dev config for Token Database */
 const dbConfig = {
     host: 'localhost',
     user: 'root',
@@ -21,6 +22,7 @@ const dbConfig = {
     database: 'tokenDB',
 };
 
+/** @dev settings for different chains (EVM-based) */
 const settingsArbitrum = {
     apiKey: process.env.ALCHEMY_APIKEY,
     network: Network.ARB_MAINNET, 
@@ -112,6 +114,10 @@ async function fetchTokenList() {
     }
 }
 
+/** @notice Fetches current token price for a set of tokens
+ * @dev fetches the current price based on tokenIds set
+ * @param tokenIds -> set of IDs of tokens for which the USD value is fetched
+ */
 async function fetchTokenPrices(tokenIds) {
     const ids = tokenIds.join(',');
 
@@ -138,6 +144,9 @@ async function fetchTokenPrices(tokenIds) {
     }
 }
 
+/** @notice function to fetch a token's ID
+ * @dev accesses the tokenDB to return id values for respective token names
+ */
 async function fetchTokenData() {
     const connection = await mysql.createConnection(dbConfig);
     try {
@@ -158,32 +167,14 @@ async function fetchTokenData() {
     }
 }
 
-// async function fetchTokenData() {
-//     try {
-//         const response = await axios.get('https://api.coingecko.com/api/v3/coins/list');
-//         return response.data.map(token => ({
-//             name: token.name.toLowerCase(),
-//             id: token.id
-//         }));
-//     } catch (error) {
-//         if (error.response && error.response.status === 429) {
-//             console.error('Rate limit exceeded. Please wait before making more requests.');
-//             // Optionally implement a delay here
-//             await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
-//             return fetchTokenData(); // Retry fetching the data
-//         }
-//         console.error('Error fetching token list:', error);
-//         return [];
-//     }
-// }
-
 
 /** ----------------------------------------------------------------------------- 
 ----------------------------- PORTFOLIO TRACKER ---------------------------------
 ------------------------------------------------------------------------------ */
 
 /// @note Add native tokens as well
-/** @dev fetchAddressDetails fetches the address's ERC-20 token assets
+/** @notice fetches the address's ERC-20 token assets
+ * @dev uses alchemy-sdk's `getTokenBalances` function to get a particular address's token assets
  * @param settings -> alchemy settiings for different chains
  * @param address -> the address value for which the tokens are being fetched
  */
@@ -263,7 +254,9 @@ app.post('/fetch-address-details', async (req, res) => {
 
 /// @note fetch USD values
 /// @note see what you can do for Linea and Avalanche
-/** @dev function to fetch all transfers made out from and into the given address
+/** @notice function to fetch all transfers made out from and into the given address
+ * @dev calls getAssetTransfers to fetch all transfers made to and from a particular address
+ * @dev includes ERC-20 tokens and native tokens
  * @param settings -> alchemy settings for different chains
  * @param address -> the address value for which the transfers need to be checked
  */
@@ -279,7 +272,7 @@ async function tokenTransfers(settings, address) {
                 fromBlock: '0x0',
                 toBlock: 'latest',
                 fromAddress: address,
-                category: ['erc20'],
+                category: ['erc20', 'external'],
                 withMetadata: true,
                 excludeZeroValue: true,
                 maxCount: 100,
@@ -289,7 +282,7 @@ async function tokenTransfers(settings, address) {
                 fromBlock: '0x0',
                 toBlock: 'latest',
                 toAddress: address,
-                category: ['erc20'],
+                category: ['erc20', 'external'],
                 withMetadata: true,
                 excludeZeroValue: true,
                 maxCount: 100,
@@ -320,7 +313,8 @@ async function tokenTransfers(settings, address) {
     };
 }
 
-/** @dev address value is passed here to fetch all to and from transfer of tokens from that address
+/** @notice address value is passed here to fetch all to and from transfer of tokens from that address
+ * @dev calls the tokenTransfers function for fetching transfers from multiple chains
  * @param req -> req.params.address == the address passed
  */
 app.get('/token-transfers/:address', async (req, res) => {
@@ -356,6 +350,12 @@ app.get('/token-transfers/:address', async (req, res) => {
 ------------------------------------------------------------------------------ */
 
 ///@note fetch USD values
+/** @notice fetches all internal transfer of tokens in a single transaction
+ * @dev fetches tx receipt for a particular tx hash and filters them for ERC-20 transfers
+ * @param txHash -> the tx hash for which we are fetching the internal transfers
+ * @param providerUrl -> the chain the tx hash belongs to
+ * @param settings -> the chain's settings for alchemy-sdk
+ */
 async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
     try {
         const provider = new ethers.JsonRpcProvider(`${providerUrl}`);
@@ -403,6 +403,10 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
     }
 }
 
+/** @notice calls the fetchTokenTransfersFromTx function from different chains
+ * @dev will only run for one chain to which the tx hash belongs to, written conditional statements so that it checks for which chain the tx belongs to
+ * @param req.params.txhash -> the tx hash for which the transfers need to be fetched
+ */
 app.get('/fetch-transaction-details/:txhash', async (req, res) => {
     const txhash = req.params.txhash;
 
@@ -467,6 +471,10 @@ app.get('/fetch-transaction-details/:txhash', async (req, res) => {
  * ----------------------------- RECENT TXS TABLE -------------------------------
  * --------------------------------------------------------------------------- */
 
+/** @notice fetches all txs from the latest block of a chain
+ * @dev called for every chain, stores tx details of all ERC-20 and native token transfer txs
+ * @param settings -> settings for the chain for which the recent txs are being fetched
+ */
 async function recentTxs(settings) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
@@ -489,6 +497,9 @@ async function recentTxs(settings) {
     return filteredTxs;
 }
 
+/** @notice calls the recentTxs function for multiple chains
+ * @dev maps the txs based on the chain and returns the value
+ */
 app.get('/recent-txs', async (req, res) => {
     try {
         const chains = {
@@ -507,6 +518,7 @@ app.get('/recent-txs', async (req, res) => {
 });
 
 /// @note add balance history, figure out how you can fetch the data once you click on a token value
+/// @note finish natspec comments
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
