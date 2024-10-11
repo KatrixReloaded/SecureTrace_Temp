@@ -5,6 +5,7 @@ const { Alchemy, Network } = require('alchemy-sdk');
 const { ethers } = require('ethers');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
+import { addOrUpdateTokenPrice } from './TokenPricesDB';
 
 
 /** ----------------------------------------------------------------------------- 
@@ -15,12 +16,15 @@ const app = express();
 const port = process.env.PORT || 3001;
 
 /** @dev config for Token Database */
-const dbConfig = {
+const pool = mysql.createPool({
     host: 'localhost',
     user: 'root',
     password: 'SQLkatrix1004@',
     database: 'tokenDB',
-};
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+});
 
 /** @dev settings for different chains (EVM-based) */
 const settingsArbitrum = {
@@ -98,7 +102,7 @@ let tokenNameToId;
 
 /** @dev checks whether the token is a valid/official token and not some bs*/
 async function fetchTokenList() {
-    const connection = await mysql.createConnection(dbConfig);
+    const connection = await pool.getConnection();
     try {
         if(!validTokenAddresses){
             const [rows] = await connection.execute('SELECT address FROM tokens');
@@ -110,7 +114,56 @@ async function fetchTokenList() {
         console.error('Error fetching token list from database:', error);
         return new Set(); 
     } finally {
-        await connection.end(); // Ensure the connection is closed
+        connection.release(); // Ensure the connection is closed
+    }
+}
+
+async function getUpToDateTokenPrices(tokenIds) {
+    const connection = await pool.getConnection();
+
+    try {
+        const query = `
+            SELECT id, tokenPrice
+            FROM tokenPrices
+            WHERE id IN (?) AND TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) < 5
+        `;
+
+        const [rows] = await connection.execute(query, [tokenIds]);
+
+        const tokenPrices = {};
+        for (const row of rows) {
+            tokenPrices[row.id] = { usd: row.tokenPrice };
+        }
+
+        return tokenPrices;
+    } catch (error) {
+        console.error('Error fetching up-to-date token prices:', error);
+        return {};
+    } finally {
+        connection.release();
+    }
+}
+
+async function getTokensNeedingUpdate(tokenIds) {
+    const connection = await pool.getConnection();
+
+    try {
+        const query = `
+            SELECT id, TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) as minutesAgo
+            FROM tokenPrices
+            WHERE id IN (?) AND TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5
+        `;
+
+        const [rows] = await connection.execute(query, [tokenIds]);
+
+        const tokensToUpdate = rows.map(row => row.id);
+
+        return tokensToUpdate;
+    } catch (error) {
+        console.error('Error checking token update status:', error);
+        return [];
+    } finally {
+        connection.release();
     }
 }
 
@@ -119,36 +172,55 @@ async function fetchTokenList() {
  * @param tokenIds -> set of IDs of tokens for which the USD value is fetched
  */
 async function fetchTokenPrices(tokenIds) {
-    const ids = tokenIds.join(',');
+    const upToDatePrices = await getUpToDateTokenPrices(tokenIds);
 
-    try {
-        const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+    const tokensToUpdate = await getTokensNeedingUpdate(tokenIds);
 
-        // Check if the response status is 429
-        if (response.status === 429) {
-            console.error('Rate limit exceeded. Please wait before making more requests.');
-            // Implement a delay before retrying
-            await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
-            return fetchTokenPrices(tokenIds); // Retry fetching prices
+    let newPrices = {};
+    if (tokensToUpdate.length > 0) {
+        const ids = tokensToUpdate.join(',');
+
+        try {
+            const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+
+            // Check if the response status is 429 (rate limit exceeded)
+            if (response.status === 429) {
+                console.error('Rate limit exceeded. Please wait before making more requests.');
+                // Implement a delay before retrying
+                await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+                return fetchTokenPrices(tokenIds);
+            }
+
+            if (!response.ok) {
+                throw new Error(`Error fetching prices: ${response.statusText}`);
+            }
+
+            newPrices = await response.json();
+
+            // Store or update token prices in the database
+            for (const [tokenId, priceData] of Object.entries(newPrices)) {
+                const price = priceData.usd;
+                await addOrUpdateTokenPrice(tokenId, price);
+            }
+
+        } catch (error) {
+            console.error('Error fetching token prices:', error);
+            return {};
         }
-
-        if (!response.ok) {
-            throw new Error(`Error fetching prices: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        return data; // Return price data
-    } catch (error) {
-        console.error('Error fetching token prices:', error);
-        return {}; // Return an empty object or handle it as needed
     }
+
+    const allPrices = { ...upToDatePrices, ...newPrices };
+
+    return allPrices;
 }
+
+
 
 /** @notice function to fetch a token's ID
  * @dev accesses the tokenDB to return id values for respective token names
  */
 async function fetchTokenData() {
-    const connection = await mysql.createConnection(dbConfig);
+    const connection = await pool.getConnection();
     try {
         if(!tokenNameToId) {
             const [rows] = await connection.execute('SELECT name, id FROM tokens');
@@ -163,7 +235,7 @@ async function fetchTokenData() {
         console.error('Error fetching token data from database:', error);
         return [];
     } finally {
-        await connection.end(); // Ensure the connection is closed
+        connection.release();
     }
 }
 
@@ -518,7 +590,6 @@ app.get('/recent-txs', async (req, res) => {
 });
 
 /// @note add balance history, figure out how you can fetch the data once you click on a token value
-/// @note finish natspec comments
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });

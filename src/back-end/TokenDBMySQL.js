@@ -2,22 +2,19 @@ const mysql = require('mysql2/promise'); // Use promise-based API for async/awai
 const axios = require('axios');
 
 // MySQL connection settings
-const dbConfig = {
+const pool = mysql.createPool({
     host: 'localhost',
     user: 'root',
     password: 'SQLkatrix1004@',
     database: 'tokenDB',
-};
-
-// Function to connect to the database
-async function connectDB() {
-    const connection = await mysql.createConnection(dbConfig);
-    return connection;
-}
+    waitForConnections: true,
+    connectionLimit: 10, // Adjust this based on your needs
+    queueLimit: 0,
+});
 
 // Fetch tokens from CoinGecko and store them in the database
 async function fetchAndStoreTokens() {
-    const connection = await connectDB();
+    const connection = await pool.getConnection();
     try {
         // Fetch tokens from CoinGecko
         const response = await axios.get('https://api.coingecko.com/api/v3/coins/list');
@@ -61,7 +58,7 @@ async function fetchAndStoreTokens() {
     } catch (error) {
         console.error('Error fetching or updating tokens:', error);
     } finally {
-        await connection.end(); // Ensure the connection is closed
+        await connection.release(); // Ensure the connection is closed
     }
 }
 
