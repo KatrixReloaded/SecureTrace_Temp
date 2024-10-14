@@ -29,8 +29,6 @@ async function addOrUpdateTokenPrice(id, tokenPrice) {
         await connection.execute(sql, [id, tokenPrice]);
 
         connection.release();  // Release the connection back to the pool
-
-        return result;  // Return the result from the query execution
     } catch (error) {
         console.error('Error inserting or updating token price:', error);
         throw error;  // Rethrow error to be handled by the caller
