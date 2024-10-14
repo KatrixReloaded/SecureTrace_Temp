@@ -82,6 +82,36 @@ let tokenNameToId;
 
 
 /** ----------------------------------------------------------------------------- 
+----------------------------- DATABASE FUNCTIONS --------------------------------
+------------------------------------------------------------------------------ */
+
+async function addOrUpdateTokenPrice(id, tokenPrice) {
+    try {
+        const connection = await pool.getConnection();  // Get a connection from the pool
+
+        // SQL query with ON DUPLICATE KEY UPDATE for upserting token prices
+        const sql = `
+            INSERT INTO tokenPrices (id, tokenPrice)
+            VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE
+                tokenPrice = IF(TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5, VALUES(tokenPrice), tokenPrice),
+                createdAt = IF(TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5, CURRENT_TIMESTAMP, createdAt)
+        `;
+
+        // Execute the query with provided values
+        await connection.execute(sql, [id, tokenPrice]);
+
+        connection.release();  // Release the connection back to the pool
+    } catch (error) {
+        console.error('Error inserting or updating token price:', error);
+        throw error;  // Rethrow error to be handled by the caller
+    }
+}
+
+
+
+
+/** ----------------------------------------------------------------------------- 
  ------------------------------ COMMON FUNCTIONS ---------------------------------
  ------------------------------------------------------------------------------ */
  
