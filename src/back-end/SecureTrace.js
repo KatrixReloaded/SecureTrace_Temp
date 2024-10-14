@@ -5,7 +5,7 @@ const { Alchemy, Network } = require('alchemy-sdk');
 const { ethers } = require('ethers');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
-const { addOrUpdateTokenPrice } = require('./TokenPricesDB');
+// const { addOrUpdateTokenPrice } = require('./TokenPricesDB');
 
 
 /** ----------------------------------------------------------------------------- 
@@ -85,6 +85,11 @@ let tokenNameToId;
 ----------------------------- DATABASE FUNCTIONS --------------------------------
 ------------------------------------------------------------------------------ */
 
+/** @notice this function is used to add or update values to the tokenPrices table
+ * @dev the function accepts token ID and price values and adds them to the database only if it is a new token or the token price is older than 5 minutes
+ * @param id -> the token ID for which the price is being added
+ * @param tokenPrice -> the price of the token
+ */
 async function addOrUpdateTokenPrice(id, tokenPrice) {
     try {
         const connection = await pool.getConnection();  // Get a connection from the pool
@@ -109,10 +114,8 @@ async function addOrUpdateTokenPrice(id, tokenPrice) {
 }
 
 
-
-
 /** ----------------------------------------------------------------------------- 
- ------------------------------ COMMON FUNCTIONS ---------------------------------
+ ----------------------------- COMMON FUNCTIONS ---------------------------------
  ------------------------------------------------------------------------------ */
  
  /** @dev just in case we need to set a timeout 
@@ -130,7 +133,7 @@ async function addOrUpdateTokenPrice(id, tokenPrice) {
      }
  }
 
-/** @dev checks whether the token is a valid/official token and not some bs*/
+/** @dev checks whether the token is a valid/official token and not some bs */
 async function fetchTokenList() {
     const connection = await pool.getConnection();
     try {
@@ -148,6 +151,10 @@ async function fetchTokenList() {
     }
 }
 
+/** @notice function to fetch up-to-date token prices
+ * @dev returns token prices for tokens whose prices have been updated less than 5 minutes ago
+ * @param tokenIds -> set of IDs of tokens for which the USD value is fetched
+ */
 async function getUpToDateTokenPrices(tokenIds) {
     const connection = await pool.getConnection();
 
