@@ -9,6 +9,6 @@
 ```bash
 npm i
 source .env
-node src/txTracingVisualizer/networks/addressVisualizer.js
+node src/txTracingVisualizer/networks/SecureTrace.js
 npm start
 ```

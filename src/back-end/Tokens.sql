@@ -11,6 +11,6 @@ CREATE TABLE tokens (
 
 CREATE TABLE tokenPrices (
     id VARCHAR(255) PRIMARY KEY,
-    price DECIMAL(10, 10),
+    tokenPrice DECIMAL(10, 10),
     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
