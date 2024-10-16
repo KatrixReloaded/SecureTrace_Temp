@@ -17,10 +17,10 @@ const port = process.env.PORT || 3001;
 
 /** @dev config for Token Database */
 const pool = mysql.createPool({
-    host: 'localhost',
-    user: 'root',
-    password: 'SQLkatrix1004@',
-    database: 'tokenDB',
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    database: process.env.DB_NAME,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
