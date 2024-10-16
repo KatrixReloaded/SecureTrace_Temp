@@ -77,6 +77,10 @@ app.use(cors({
 
 app.use(express.json());
 
+app.get('/', (req, res) => {
+    res.send('Hello, SecureTrace is live!');
+});
+
 let validTokenAddresses;
 let tokenNameToId;
 
