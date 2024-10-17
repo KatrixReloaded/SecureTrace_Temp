@@ -385,7 +385,7 @@ async function tokenTransfers(settings, address) {
 
         return transfers.transfers.filter(tx => {
             if (tx.category === 'erc20') {
-                const isValidToken = validTokenAddresses.some(token => token.address === tx.rawContract.address.toLowerCase());
+                const isValidToken = validTokenAddresses.has(tx.rawContract.address.toLowerCase());
                 return isValidToken;
             } else if (tx.category === 'external') {
                 return true;
@@ -394,17 +394,25 @@ async function tokenTransfers(settings, address) {
         });
     };
 
-    const [fromTransfers, toTransfers] = await Promise.all([
-        fetchTransfers('from'),
-        fetchTransfers('to'),
-    ]);
+    try {
+        const [fromTransfers, toTransfers] = await Promise.all([
+            fetchTransfers('from'),
+            fetchTransfers('to'),
+        ]);
 
-    console.log("From Transfers");
-    console.log("To Transfers");
-    return {
-        fromTransfers,
-        toTransfers,
-    };
+        console.log("From Transfers");
+        console.log("To Transfers");
+        return {
+            fromTransfers,
+            toTransfers,
+        };
+    } catch (error) {
+        console.error('Error fetching token transfers:', error);
+        return {
+            fromTransfers: [],
+            toTransfers: [],
+        };
+    }
 }
 
 /** @notice address value is passed here to fetch all to and from transfer of tokens from that address
