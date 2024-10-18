@@ -460,6 +460,8 @@ app.get('/token-transfers/:address', async (req, res) => {
  */
 async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
     try {
+        const validTokenAddresses = await fetchTokenList();
+        tokenNameToId = await fetchTokenData();
         const provider = new ethers.JsonRpcProvider(`${providerUrl}`);
         const alchemy = new Alchemy(settings);
         const receipt = await alchemy.core.getTransactionReceipt(txHash);
@@ -470,10 +472,36 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
         }
 
         console.log(`Found ${receipt.logs.length} logs in the transaction...`);
+        
+        const tx = await alchemy.core.getTransaction(txHash);
+        const decodedTransfers = [];
+
+        if (tx.value > 0) {
+            const nativeTransfer = {
+                from: tx.from,
+                to: tx.to,
+                value: ethers.formatEther(tx.value._hex),
+                tokenName: "Ethereum",
+                tokenSymbol: "ETH",
+                contractAddress: null,
+                tokenPrice: null
+            };
+            
+            const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === nativeTransfer.tokenName.toLowerCase());
+            if(tokenId) {
+                const tokenPrice = await fetchTokenPrices([tokenId.id]);
+                nativeTransfer.tokenPrice = tokenPrice[tokenId.id] ? tokenPrice[tokenId.id].usd : 0;
+            }
+            console.log("Native Transfer", nativeTransfer);
+            decodedTransfers.push(nativeTransfer);
+        }
 
         const tokenTransfers = receipt.logs.filter(log => log.topics[0] === ERC20_TRANSFER_TOPIC);
-
-        const decodedTransfers = await Promise.all(tokenTransfers.map(async (log) => {
+        let tokenIds = [];
+        const decodedTokenTransfers = await Promise.all(tokenTransfers.map(async (log) => {
+            if(!validTokenAddresses.has(log.address.toLowerCase())) {
+                return {};
+            }
             const from = ethers.getAddress(log.topics[1].slice(26));
             const to = ethers.getAddress(log.topics[2].slice(26));
             const value = BigInt(log.data);
@@ -488,18 +516,35 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
             } catch (error) {
                 console.error(`Error fetching token details for ${log.address}:`, error);
             }
+            
+            const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === name.toLowerCase());
+            if(tokenId) {
+                const tokenTransfer = {
+                    from,
+                    to,
+                    value: ethers.formatUnits(value, decimals),
+                    contractAddress: log.address,
+                    tokenName: name,
+                    tokenSymbol: symbol,
+                    tokenId: tokenId.id,
+                    tokenPrice: 0
+                }
+                tokenIds.push(tokenTransfer.tokenId);
 
-            return {
-                from,
-                to,
-                value: ethers.formatUnits(value, decimals), // Assuming token with 18 decimals
-                contractAddress: log.address,
-                tokenName: name,
-                tokenSymbol: symbol
-            };
+                return tokenTransfer;
+            } else {
+                return {};
+            }
         }));
 
-        return decodedTransfers;
+        const tokenPrices = await fetchTokenPrices(tokenIds);
+        Object.values(decodedTokenTransfers).forEach(transfer => {
+            const tokenId = transfer.tokenId;
+            transfer.tokenPrice = tokenPrices[tokenId] ? tokenPrices[tokenId].usd : 0;
+            console.log(transfer.tokenName, transfer.value, transfer.tokenSymbol, transfer.tokenPrice, "USD");
+        });
+
+        return [...decodedTransfers, ...decodedTokenTransfers.filter(t => Object.keys(t).length)];
     } catch (error) {
         console.error('Error fetching token transfers:', error);
     }
@@ -590,7 +635,7 @@ async function recentTxs(settings) {
     });
 
     let tokenIds = [];
-    const filteredTxs = txs.transfers.filter(tx => {
+    let filteredTxs = txs.transfers.filter(tx => {
         if (tx.category === 'erc20') {
             return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
         } else if (tx.category === 'external') {
@@ -607,9 +652,13 @@ async function recentTxs(settings) {
             if (tokenName) {
                 const tokenId = tokenNameToId.find(t => t.name === tokenName);
                 if (tokenId) {
+                    tx.tokenId = tokenId.id;
                     tokenIds.push(tokenId.id);
                 }
             }
+        } else if (tx.category === 'external') {
+            tx.tokenId = "ethereum";
+            tokenIds.push("ethereum");
         }
     }
 
@@ -620,6 +669,14 @@ async function recentTxs(settings) {
             tx.tokenPrice = tokenPrices[tx.tokenId].usd || 0;
         }
     }
+
+    filteredTxs = filteredTxs.filter(tx => {
+        if(tx.tokenPrice) {
+            return true;
+        } else {
+            return false;
+        }
+    });
 
     console.log("Txs fetched");
     return filteredTxs;
