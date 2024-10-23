@@ -70,10 +70,10 @@ const ERC20_ABI = [
 ];
 
 app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST'],
-    allowedHeaders: ['Content-Type']
-}));
+    origin: '*',  // Allow all origins
+    methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  }));
 
 app.use(express.json());
 
@@ -391,8 +391,23 @@ async function tokenTransfers(settings, address) {
                 return true;
             }
             return false;
+        }).map(tx => {
+            return {
+                txHash: tx.hash,
+                from: tx.from,
+                to: tx.to,
+                value: ethers.formatUnits(tx.value, tx.asset ? tx.asset.decimals : 18),
+                asset: tx.asset,
+                assetType: tx.category === 'erc20' ? 'ERC20' : 'External',
+                tokenAddress: tx.rawContract ? tx.rawContract.address : null,
+                timestamp: tx.metadata.blockTimestamp,
+                tokenPrice: null,  // Placeholder for token price
+                tokenName: null
+            };
         });
     };
+
+    // ******CONTINUE HERE******
 
     try {
         const [fromTransfers, toTransfers] = await Promise.all([
@@ -402,6 +417,7 @@ async function tokenTransfers(settings, address) {
 
         console.log("From Transfers");
         console.log("To Transfers");
+
         return {
             fromTransfers,
             toTransfers,
@@ -414,6 +430,7 @@ async function tokenTransfers(settings, address) {
         };
     }
 }
+
 
 /** @notice address value is passed here to fetch all to and from transfer of tokens from that address
  * @dev calls the tokenTransfers function for fetching transfers from multiple chains
@@ -451,7 +468,6 @@ app.get('/token-transfers/:address', async (req, res) => {
 ------------------------------ TRANSACTION TTV ----------------------------------
 ------------------------------------------------------------------------------ */
 
-///@note fetch USD values
 /** @notice fetches all internal transfer of tokens in a single transaction
  * @dev fetches tx receipt for a particular tx hash and filters them for ERC-20 transfers
  * @param txHash -> the tx hash for which we are fetching the internal transfers
@@ -623,63 +639,69 @@ app.get('/fetch-transaction-details/:txhash', async (req, res) => {
  * @param settings -> settings for the chain for which the recent txs are being fetched
  */
 async function recentTxs(settings) {
-    const alchemy = new Alchemy(settings);
-    const validTokenAddresses = await fetchTokenList();
-    const tokenNameToId = await fetchTokenData();
-    const txs = await alchemy.core.getAssetTransfers({
-        fromBlock: 'latest',
-        category: ['erc20', 'external'],
-        withMetadata: true,
-        excludeZeroValue: true,
-        maxCount: 50,
-    });
+    try {
+        const alchemy = new Alchemy(settings);
+        const validTokenAddresses = await fetchTokenList();
+        console.log("Fetching Txs");
+        const tokenNameToId = await fetchTokenData();
+        const txs = await alchemy.core.getAssetTransfers({
+            fromBlock: 'latest',
+            category: ['erc20', 'external'],
+            withMetadata: true,
+            excludeZeroValue: true,
+            maxCount: 50,
+        });
 
-    let tokenIds = [];
-    let filteredTxs = txs.transfers.filter(tx => {
-        if (tx.category === 'erc20') {
-            return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
-        } else if (tx.category === 'external') {
-            return true;
-        }
-        return false;
-    });
-
-    for (const tx of filteredTxs) {
-        if (tx.category === 'erc20') {
-            const contractAddress = tx.rawContract.address.toLowerCase();
-            const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-            const tokenName = metadata?.name?.toLowerCase();
-            if (tokenName) {
-                const tokenId = tokenNameToId.find(t => t.name === tokenName);
-                if (tokenId) {
-                    tx.tokenId = tokenId.id;
-                    tokenIds.push(tokenId.id);
-                }
+        let tokenIds = [];
+        let filteredTxs = txs.transfers.filter(tx => {
+            if (tx.category === 'erc20') {
+                return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
+            } else if (tx.category === 'external') {
+                return true;
             }
-        } else if (tx.category === 'external') {
-            tx.tokenId = "ethereum";
-            tokenIds.push("ethereum");
-        }
-    }
-
-    const tokenPrices = await fetchTokenPrices(tokenIds);
-
-    for (const tx of filteredTxs) {
-        if (tx.tokenId && tokenPrices[tx.tokenId]) {
-            tx.tokenPrice = tokenPrices[tx.tokenId].usd || 0;
-        }
-    }
-
-    filteredTxs = filteredTxs.filter(tx => {
-        if(tx.tokenPrice) {
-            return true;
-        } else {
             return false;
-        }
-    });
+        });
 
-    console.log("Txs fetched");
-    return filteredTxs;
+        for (const tx of filteredTxs) {
+            if (tx.category === 'erc20') {
+                const contractAddress = tx.rawContract.address.toLowerCase();
+                const metadata = await alchemy.core.getTokenMetadata(contractAddress);
+                const tokenName = metadata?.name?.toLowerCase();
+                if (tokenName) {
+                    const tokenId = tokenNameToId.find(t => t.name === tokenName);
+                    if (tokenId) {
+                        tx.tokenId = tokenId.id;
+                        tokenIds.push(tokenId.id);
+                    }
+                }
+            } else if (tx.category === 'external') {
+                tx.tokenId = "ethereum";
+                tokenIds.push("ethereum");
+            }
+        }
+
+        const tokenPrices = await fetchTokenPrices(tokenIds);
+
+        for (const tx of filteredTxs) {
+            if (tx.tokenId && tokenPrices[tx.tokenId]) {
+                tx.tokenPrice = tokenPrices[tx.tokenId].usd || 0;
+            }
+        }
+
+        filteredTxs = filteredTxs.filter(tx => {
+            if(tx.tokenPrice) {
+                return true;
+            } else {
+                return false;
+            }
+        });
+
+        console.log("Txs fetched");
+        return filteredTxs;
+    } catch (error) {
+        console.error('Error fetching recent transactions:', error);
+        return [];
+    }
 }
 
 /** @notice calls the recentTxs function for multiple chains
