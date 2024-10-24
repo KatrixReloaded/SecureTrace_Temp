@@ -72,7 +72,7 @@ const ERC20_ABI = [
 app.use(cors({
     origin: '*',  // Allow all origins
     methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
   }));
 
 app.use(express.json());

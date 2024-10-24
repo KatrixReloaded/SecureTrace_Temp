@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import axios from 'axios';
 
 const RecentTransactions = () => {
     const [transactions, setTransactions] = useState([]);
@@ -8,54 +9,38 @@ const RecentTransactions = () => {
     useEffect(() => {
         const fetchTransactions = async () => {
             try {
-                const response = await fetch('http://localhost:3001/recent-txs');
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                const data = await response.json();
-                setTransactions(data.txs);
+                const response = await axios.get("https://caiman-wanted-fox.ngrok-free.app/recent-txs", {
+                    headers: {
+                        'ngrok-skip-browser-warning': 'true',
+                        'Content-Type': 'application/json',
+                    },
+                });
+                setTransactions(response.data); // Assuming response.data is the array of transactions
             } catch (err) {
-                setError(err.message);
+                setError(err.message); // Capture error message
             } finally {
-                setLoading(false);
+                setLoading(false); // Set loading to false regardless of success or failure
             }
         };
 
         fetchTransactions();
-    }, []);
+    }, []); // Empty dependency array means this effect runs once on mount
 
-    if (loading) return <div>Loading...</div>;
-    if (error) return <div>Error: {error}</div>;
+    if (loading) return <p>Loading...</p>;
+    if (error) return <p>Error: {error}</p>;
 
     return (
         <div>
             <h1>Recent Transactions</h1>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Transaction Hash</th>
-                        <th>From</th>
-                        <th>To</th>
-                        <th>Value</th>
-                        <th>Token</th>
-                        <th>Timestamp</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {transactions.map((chainTxs, chainIndex) => (
-                        chainTxs.map((tx, txIndex) => (
-                            <tr key={`${chainIndex}-${txIndex}`}>
-                                <td>{tx.hash}</td>
-                                <td>{tx.from}</td>
-                                <td>{tx.to}</td>
-                                <td>{tx.value}</td>
-                                <td>{tx.asset}</td>
-                                <td>{tx.metadata.blockTimestamp}</td>
-                            </tr>
-                        ))
-                    ))}
-                </tbody>
-            </table>
+            <ul>
+                {transactions.length > 0 ? (
+                    transactions.map((tx, index) => (
+                        <li key={index}>{JSON.stringify(tx)}</li> // Display each transaction as JSON
+                    ))
+                ) : (
+                    <li>No transactions found.</li>
+                )}
+            </ul>
         </div>
     );
 };

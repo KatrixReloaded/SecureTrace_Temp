@@ -8,9 +8,9 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* <Route path="/" element={<RecentTransactions />} /> */}
+        <Route path="/" element={<RecentTransactions />} />
         {/* <Route path="/" element={<TokenDetails />} /> */}
-        <Route path="/" element={<TokenTransfers />} />
+        {/* <Route path="/" element={<TokenTransfers />} /> */}
       </Routes>
     </BrowserRouter>
   );
