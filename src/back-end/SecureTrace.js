@@ -279,8 +279,16 @@ async function fetchAddressDetails(settings, address) {
     let tokenDetails = [];
     const tokenIds = [];
 
+    const tokenMetadataCache = new Map();
     for(const token of balances.tokenBalances) {
-        const metadata = await alchemy.core.getTokenMetadata(token.contractAddress);
+        const contractAddress = token.contractAddress.toLowerCase();
+        
+        if (!tokenMetadataCache.has(contractAddress)) {
+            const metadata = await alchemy.core.getTokenMetadata(contractAddress);
+            tokenMetadataCache.set(contractAddress, metadata);
+        }
+        const metadata = tokenMetadataCache.get(contractAddress);
+        
         if (!metadata || metadata.decimals === 0 || !metadata.name || !metadata.symbol) {
             continue;
         }
@@ -300,7 +308,8 @@ async function fetchAddressDetails(settings, address) {
                 tokenName: metadata.name, 
                 tokenSymbol: metadata.symbol, 
                 tokenId: tokenId.id,
-                tokenPrice: 0});
+                tokenPrice: 0
+            });
         }
     }
 
@@ -493,7 +502,15 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
         const decodedTransfers = [];
 
         if (tx.value > 0) {
-            const nativeTransfer = {
+            const nativeTransfer = settings.network === Network.MATIC_MAINNET ? {
+                from: tx.from,
+                to: tx.to,
+                value: ethers.formatEther(tx.value._hex),
+                tokenName: "Polygon",
+                tokenSymbol: "MATIC",
+                contractAddress: null,
+                tokenPrice: null
+            } : {
                 from: tx.from,
                 to: tx.to,
                 value: ethers.formatEther(tx.value._hex),
@@ -696,9 +713,8 @@ async function recentTxs(settings) {
                     }
                 }
             } else if (tx.category === 'external') {
-                tx.tokenId = tx.asset === "ETH" ? "ethereum" : 
-                    tx.asset === "MATIC" ? "matic-network" : null;
-                if(tx.tokenId !== null) tokenIds.push(tx.tokenId);
+                tx.tokenId = tx.asset === "MATIC" ? "matic-network" : "ethereum";
+                tokenIds.push(tx.tokenId);
             }
         }
 
@@ -773,7 +789,7 @@ app.get('/top-tokens', async (req, res) => {
     }
 });
 
-/// @note add balance history, figure out how you can fetch the data once you click on a token value
+/// @note add balance history
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
