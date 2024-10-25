@@ -641,31 +641,52 @@ app.get('/fetch-transaction-details/:txhash', async (req, res) => {
 async function recentTxs(settings) {
     try {
         const alchemy = new Alchemy(settings);
+        let currentBlock = await alchemy.core.getBlockNumber();
         const validTokenAddresses = await fetchTokenList();
-        console.log("Fetching Txs");
         const tokenNameToId = await fetchTokenData();
-        const txs = await alchemy.core.getAssetTransfers({
-            fromBlock: 'latest',
-            category: ['erc20', 'external'],
-            withMetadata: true,
-            excludeZeroValue: true,
-            maxCount: 50,
-        });
 
-        let tokenIds = [];
-        let filteredTxs = txs.transfers.filter(tx => {
-            if (tx.category === 'erc20') {
-                return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
-            } else if (tx.category === 'external') {
-                return true;
+        let txs = {};
+        let filteredTxs;
+        for (let i = 0; i < 10; i++) {
+            const blockNumber = currentBlock - i;
+            if (blockNumber < 0) break;
+            
+            txs = await alchemy.core.getAssetTransfers({
+                fromBlock: blockNumber,
+                toBlock: blockNumber,
+                category: ['erc20', 'external'],
+                withMetadata: true,
+                excludeZeroValue: true,
+                maxCount: 30,
+            });
+            
+            filteredTxs = txs.transfers.filter(tx => {
+                if (tx.category === 'erc20') {
+                    return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
+                } else if (tx.category === 'external') {
+                    return true;
+                }
+                return false;
+            });
+            
+            if (filteredTxs.length > 0) {
+                break;
             }
-            return false;
-        });
-
+        }
+        
+        const tokenMetadataCache = new Map();
+        let tokenIds = [];
         for (const tx of filteredTxs) {
+            
             if (tx.category === 'erc20') {
                 const contractAddress = tx.rawContract.address.toLowerCase();
-                const metadata = await alchemy.core.getTokenMetadata(contractAddress);
+
+                if (!tokenMetadataCache.has(contractAddress)) {
+                    const metadata = await alchemy.core.getTokenMetadata(contractAddress);
+                    tokenMetadataCache.set(contractAddress, metadata);
+                }
+
+                const metadata = tokenMetadataCache.get(contractAddress);
                 const tokenName = metadata?.name?.toLowerCase();
                 if (tokenName) {
                     const tokenId = tokenNameToId.find(t => t.name === tokenName);
@@ -675,8 +696,9 @@ async function recentTxs(settings) {
                     }
                 }
             } else if (tx.category === 'external') {
-                tx.tokenId = "ethereum";
-                tokenIds.push("ethereum");
+                tx.tokenId = tx.asset === "ETH" ? "ethereum" : 
+                    tx.asset === "MATIC" ? "matic-network" : null;
+                if(tx.tokenId !== null) tokenIds.push(tx.tokenId);
             }
         }
 
@@ -696,7 +718,7 @@ async function recentTxs(settings) {
             }
         });
 
-        console.log("Txs fetched");
+        console.log("Txs fetched", settings.network);
         return filteredTxs;
     } catch (error) {
         console.error('Error fetching recent transactions:', error);
@@ -713,7 +735,6 @@ app.get('/recent-txs', async (req, res) => {
             eth: settingsEthereum,
             arb: settingsArbitrum,
             opt: settingsOptimism,
-            pol: settingsPolygon,
             zk: settingsZksync,
         };
         const allTransfers = await Promise.all(Object.values(chains).map(chain => recentTxs({apiKey: chain.apiKey, network: chain.network})));

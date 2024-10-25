@@ -59,7 +59,7 @@ async function fetchAndStoreTokens() {
     } catch (error) {
         console.error('Error fetching or updating tokens:', error);
     } finally {
-        await connection.release(); // Ensure the connection is closed
+        connection.release(); // Ensure the connection is closed
     }
 }
 
