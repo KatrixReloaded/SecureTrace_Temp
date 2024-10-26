@@ -70,7 +70,7 @@ const ERC20_ABI = [
 ];
 
 app.use(cors({
-    origin: '*',  // Allow all origins
+    origin: '*',
     methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
   }));
@@ -96,9 +96,8 @@ let tokenNameToId;
  */
 async function addOrUpdateTokenPrice(id, tokenPrice) {
     try {
-        const connection = await pool.getConnection();  // Get a connection from the pool
+        const connection = await pool.getConnection();
 
-        // SQL query with ON DUPLICATE KEY UPDATE for upserting token prices
         const sql = `
             INSERT INTO tokenPrices (id, tokenPrice)
             VALUES (?, ?)
@@ -107,13 +106,12 @@ async function addOrUpdateTokenPrice(id, tokenPrice) {
                 createdAt = IF(TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5, CURRENT_TIMESTAMP, createdAt)
         `;
 
-        // Execute the query with provided values
         await connection.execute(sql, [id, tokenPrice]);
 
-        connection.release();  // Release the connection back to the pool
+        connection.release();
     } catch (error) {
         console.error('Error inserting or updating token price:', error);
-        throw error;  // Rethrow error to be handled by the caller
+        throw error;
     }
 }
 
@@ -204,11 +202,9 @@ async function fetchTokenPrices(tokenIds) {
         try {
             const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
 
-            // Check if the response status is 429 (rate limit exceeded)
             if (response.status === 429) {
                 console.error('Rate limit exceeded. Please wait before making more requests.');
-                // Implement a delay before retrying
-                await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+                await new Promise(resolve => setTimeout(resolve, 10000));
                 return fetchTokenPrices(tokenIds);
             }
 
@@ -218,7 +214,6 @@ async function fetchTokenPrices(tokenIds) {
 
             newPrices = await response.json();
 
-            // Store or update token prices in the database
             for (const [tokenId, priceData] of Object.entries(newPrices)) {
                 const price = parseFloat(priceData.usd).toFixed(8);
                 await addOrUpdateTokenPrice(tokenId, price);
@@ -272,62 +267,55 @@ async function fetchTokenData() {
  * @param address -> the address value for which the tokens are being fetched
  */
 async function fetchAddressDetails(settings, address) {
-    const validTokenAddresses = await fetchTokenList();
-    const tokenNameToId = await fetchTokenData();
     const alchemy = new Alchemy(settings);
-    const balances = await alchemy.core.getTokenBalances(address);
-    let tokenDetails = [];
-    const tokenIds = [];
 
-    const tokenMetadataCache = new Map();
-    for(const token of balances.tokenBalances) {
+    const [validTokenAddresses, tokenNameToId, balances] = await Promise.all([
+        fetchTokenList(),
+        fetchTokenData(),
+        alchemy.core.getTokenBalances(address),
+    ]);
+
+    const tokenIds = new Set();
+    const tokenDetails = balances.tokenBalances.map(async (token) => {
         const contractAddress = token.contractAddress.toLowerCase();
-        
-        if (!tokenMetadataCache.has(contractAddress)) {
-            const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-            tokenMetadataCache.set(contractAddress, metadata);
-        }
-        const metadata = tokenMetadataCache.get(contractAddress);
-        
-        if (!metadata || metadata.decimals === 0 || !metadata.name || !metadata.symbol) {
-            continue;
-        }
-        if (!validTokenAddresses.has(token.contractAddress.toLowerCase())) {
-            continue;
-        }
-        const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
-        if(!tokenId) {
-            continue;
-        }
-        console.log("Token found", tokenId.id);
-        const readableBalance = ethers.formatUnits(token.tokenBalance, metadata.decimals);
-        if(parseFloat(readableBalance) > 0) {
-            tokenIds.push(tokenId.id);
-            tokenDetails.push({
-                tokenBalance: readableBalance, 
-                tokenName: metadata.name, 
-                tokenSymbol: metadata.symbol, 
-                tokenId: tokenId.id,
-                tokenPrice: 0
-            });
-        }
-    }
 
-    console.log("TOKEN IDs: ",tokenIds);
-    const tokenPrices = await fetchTokenPrices(tokenIds);
-    console.log(tokenPrices);
-    Object.values(tokenDetails).forEach(token => {
-        const tokenId = token.tokenId;
-        token.tokenPrice = tokenPrices[tokenId] ? tokenPrices[tokenId].usd : 0;
-        console.log(token.tokenName, token.tokenBalance, token.tokenSymbol, token.tokenPrice, "USD");
+        if (!validTokenAddresses.has(contractAddress)) return null;
+
+        const metadata = await alchemy.core.getTokenMetadata(contractAddress);
+        if (!metadata || metadata.decimals === 0 || !metadata.name || !metadata.symbol) return null;
+
+        const tokenIdEntry = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
+        if (!tokenIdEntry) return null;
+
+        const readableBalance = ethers.formatUnits(token.tokenBalance, metadata.decimals);
+        if (parseFloat(readableBalance) > 0) {
+            tokenIds.add(tokenIdEntry.id);
+            return {
+                tokenBalance: readableBalance,
+                tokenName: metadata.name,
+                tokenSymbol: metadata.symbol,
+                tokenId: tokenIdEntry.id,
+                tokenPrice: 0,
+            };
+        }
+        return null;
     });
-    return(tokenDetails);
+
+    const resolvedTokenDetails = (await Promise.all(tokenDetails)).filter(detail => detail);
+
+    const tokenPrices = await fetchTokenPrices(Array.from(tokenIds));
+
+    resolvedTokenDetails.forEach(token => {
+        token.tokenPrice = tokenPrices[token.tokenId]?.usd || 0;
+    });
+
+    return resolvedTokenDetails;
 }
 
 /** @dev address value is passed here and tokens across multiple chains are checked */
 /** @param req -> req.body == the address passed*/
-app.post('/fetch-address-details', async (req, res) => {
-    const { address } = req.body;
+app.get('/fetch-address-details/:address', async (req, res) => {
+    const address = req.params.address;
     const chains = {
         eth: settingsEthereum,
         arb: settingsArbitrum,
@@ -366,6 +354,7 @@ app.post('/fetch-address-details', async (req, res) => {
 async function tokenTransfers(settings, address) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
+    tokenNameToId = await fetchTokenData();
 
     const fetchTransfers = async (direction) => {
         let transfers = {};
@@ -392,7 +381,8 @@ async function tokenTransfers(settings, address) {
             });
         }
 
-        return transfers.transfers.filter(tx => {
+        const tokenMetadataCache = new Map();
+        let filteredTxs = transfers.transfers.filter(tx => {
             if (tx.category === 'erc20') {
                 const isValidToken = validTokenAddresses.has(tx.rawContract.address.toLowerCase());
                 return isValidToken;
@@ -400,23 +390,74 @@ async function tokenTransfers(settings, address) {
                 return true;
             }
             return false;
-        }).map(tx => {
+        });
+
+        console.log("Filtered Txs");
+        filteredTxs = await Promise.all(filteredTxs.map(async (tx) => {
+            let contractAddress = tx.rawContract?.address;
+            if(!contractAddress && tx.category === 'external') {
+                return {
+                    txHash: tx.hash,
+                    from: tx.from,
+                    to: tx.to,
+                    value: tx.value,
+                    decimals: tx.rawContract ? tx.rawContract.decimals : 18,
+                    asset: tx.asset,
+                    assetType: 'external',
+                    tokenAddress: null,
+                    timestamp: tx.metadata.blockTimestamp,
+                    tokenPrice: null,
+                    tokenName: tx.asset === 'MATIC' ? "Polygon" : "Ethereum",
+                    tokenId: tx.asset === 'MATIC' ? "matic-network" : "ethereum",
+                };
+            } else if (!contractAddress) {
+                return null;
+            }
+
+            contractAddress = contractAddress.toLowerCase();
+            if (!tokenMetadataCache.has(contractAddress) && tx.category === 'erc20') {
+                const metadata = await alchemy.core.getTokenMetadata(contractAddress);
+                tokenMetadataCache.set(contractAddress, metadata);
+            }
+
+            const metadata = tokenMetadataCache.get(contractAddress);
+            if (!metadata || metadata.decimals === 0 || !metadata.name || !metadata.symbol) {
+                return null;
+            }
+            const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
+            if(!tokenId) {
+                return null;
+            }
+
             return {
                 txHash: tx.hash,
                 from: tx.from,
                 to: tx.to,
-                value: ethers.formatUnits(tx.value, tx.asset ? tx.asset.decimals : 18),
+                value: tx.value,
+                decimals: tx.rawContract ? tx.rawContract.decimals : 18,
                 asset: tx.asset,
-                assetType: tx.category === 'erc20' ? 'ERC20' : 'External',
+                assetType: tx.category === 'erc20' ? 'erc20' : 'external',
                 tokenAddress: tx.rawContract ? tx.rawContract.address : null,
                 timestamp: tx.metadata.blockTimestamp,
-                tokenPrice: null,  // Placeholder for token price
-                tokenName: null
+                tokenPrice: null,
+                tokenName: metadata.name,
+                tokenId: tokenId.id,
             };
-        });
-    };
+        }));
 
-    // ******CONTINUE HERE******
+        filteredTxs = filteredTxs.filter(tx => tx !== null);
+
+        const tokenIds = filteredTxs.map(tx => tx.tokenId);
+
+        const tokenPrices = await fetchTokenPrices(tokenIds);
+        filteredTxs.forEach(tx => {
+            const tokenId = tx.tokenId;
+            tx.tokenPrice = tokenPrices[tokenId] ? tokenPrices[tokenId].usd : 0;
+            console.log(tx.tokenName, tx.value, tx.tokenPrice, "USD");
+        });
+
+        return filteredTxs;
+    };
 
     try {
         const [fromTransfers, toTransfers] = await Promise.all([
@@ -502,7 +543,7 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
         const decodedTransfers = [];
 
         if (tx.value > 0) {
-            const nativeTransfer = settings.network === Network.MATIC_MAINNET ? {
+            const nativeTransfer = tx.asset === "MATIC" ? {
                 from: tx.from,
                 to: tx.to,
                 value: ethers.formatEther(tx.value._hex),
@@ -767,28 +808,59 @@ app.get('/recent-txs', async (req, res) => {
  * --------------------------- TRENDING TOKENS PAGE -----------------------------
  * --------------------------------------------------------------------------- */
 
+const cache = {
+    data: null,
+    lastFetched: 0,
+    etag: null
+};
+
+/** @notice fetches the top 10 tokens based on market cap
+ * @dev fetches the top 10 tokens based on market cap and filters out the EVM tokens
+ */
 app.get('/top-tokens', async (req, res) => {
     try {
-        tokenNameToId = await fetchTokenData();
+        const tokenNameToId = await fetchTokenData();
         const evmTokenIds = new Set(tokenNameToId.map(token => token.id));
+
+        // Check cache (cache for 5 minutes)
+        if (cache.data && Date.now() - cache.lastFetched < 5 * 60 * 1000) {
+            return res.json(cache.data);
+        }
+
+        // Fetch from CoinGecko with ETag for conditional requests
         const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets', {
             params: {
                 vs_currency: 'usd',
                 order: 'market_cap_desc',
                 per_page: 10,
                 page: 1
+            },
+            headers: {
+                'If-None-Match': cache.etag || ''
             }
         });
 
-        const topEvmTokens = response.data.filter(token => evmTokenIds.has(token.id));
-
-        res.json(topEvmTokens);
+        // Update cache if data changed
+        if (response.status === 200) {
+            cache.data = response.data.filter(token => evmTokenIds.has(token.id));
+            cache.lastFetched = Date.now();
+            cache.etag = response.headers.etag;
+            res.json(cache.data);
+        } else if (response.status === 304) {
+            // Serve cached data if not modified
+            res.json(cache.data);
+        }
     } catch (error) {
         console.error("Failed to fetch top EVM tokens:", error);
-        res.status(500).json({ error: 'Unable to retrieve top EVM token data.' });
+
+        if (cache.data) {
+            // Serve cached data if CoinGecko fails
+            res.json(cache.data);
+        } else {
+            res.status(500).json({ error: 'Unable to retrieve top EVM token data.' });
+        }
     }
 });
-
 /// @note add balance history
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
