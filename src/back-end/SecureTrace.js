@@ -256,13 +256,16 @@ async function fetchTokenData() {
     }
 }
 
+/**
+ * @notice fetches the token list from CoinGecko API, called again for Algorand
+ * @dev maps the token names to their respective IDs
+ */
 async function fetchCoinGeckoCoins() {
     const url = 'https://api.coingecko.com/api/v3/coins/list';
     const response = await fetch(url);
     const data = await response.json();
     const coinMap = {};
     
-    // Create a mapping of token names and symbols to CoinGecko IDs
     data.forEach(coin => {
         coinMap[coin.name.toLowerCase()] = coin.id;
         coinMap[coin.symbol.toLowerCase()] = coin.id;
@@ -882,45 +885,40 @@ app.get('/top-tokens', async (req, res) => {
  * ---------------------------- ALGORAND FUNCTIONS ------------------------------
  * --------------------------------------------------------------------------- */
 
-
+/**
+ * @notice Fetches the token balances for an Algorand address
+ * @dev Uses algosdk to fetch the token balances for an Algorand address and avoids NFTs
+ * @param address -> the Algorand address for which the token balances are being fetched
+ */
 async function fetchAlgorandAddressDetails(address) {
     const mainnetClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
 
     try {
-        // Validate address
         if (!algosdk.isValidAddress(address)) {
             throw new Error('Invalid Algorand address');
         }
 
-        // Get account information including all assets
         const accountInfo = await mainnetClient.lookupAccountByID(address).do();
 
-        // Get ALGO balance
-        const algoBalance = accountInfo.account.amount / BigInt(1e6); // Convert microAlgos to Algos
+        const algoBalance = accountInfo.account.amount / BigInt(1e6);
 
-        // Get ASA (Algorand Standard Assets) balances
         const assetBalances = accountInfo.account.assets || [];
-        console.log('Asset Balances:', assetBalances); // Debug: Log asset balances
+        console.log('Asset Balances:', assetBalances);
 
-        // Fetch CoinGecko coins list
         const coinGeckoCoins = await fetchCoinGeckoCoins();
 
         const assetDetails = await Promise.all(
             assetBalances.map(async (asset) => {
                 try {
-                    // Debug: Log the current asset being processed
                     console.log('Processing Asset:', asset);
 
-                    // Ensure assetId exists
                     if (asset.assetId === undefined) {
                         console.warn('Asset ID is undefined or missing, skipping asset.');
                         return null;
                     }
 
-                    // Fetch asset info
                     const assetInfo = await mainnetClient.lookupAssetByID(asset.assetId).do();
 
-                    // Check if assetInfo is valid
                     if (!assetInfo.asset) {
                         console.warn(`No asset found for ID: ${asset.assetId}`);
                         return null;
@@ -928,18 +926,15 @@ async function fetchAlgorandAddressDetails(address) {
 
                     const params = assetInfo.asset.params;
 
-                    // Check if the asset is an NFT (total supply == 1)
                     if (params.total === 1) {
                         console.warn(`Ignoring NFT with ID: ${asset.assetId}`);
-                        return null; // Ignore NFTs
+                        return null;
                     }
 
-                    // Calculate decimals-adjusted balance
                     const decimals = params.decimals || 0;
                     const rawBalance = asset.amount;
-                    const adjustedBalance = rawBalance / BigInt(Math.pow(10, decimals)); // Use BigInt for division
+                    const adjustedBalance = rawBalance / BigInt(Math.pow(10, decimals));
 
-                    // Only return assets with non-zero balances
                     if (adjustedBalance > 0) {
                         const tokenId = coinGeckoCoins[params.name.toLowerCase()] || coinGeckoCoins[params['unit-name'].toLowerCase()] || null;
 
@@ -947,9 +942,9 @@ async function fetchAlgorandAddressDetails(address) {
                             tokenBalance: adjustedBalance.toString(),
                             tokenName: params.name,
                             tokenSymbol: params['unit-name'],
-                            tokenId: tokenId, // Store the CoinGecko ID here
+                            tokenId: tokenId,
                             tokenDecimals: decimals,
-                            tokenPrice: 0, // You'll need to implement price fetching from your preferred source
+                            tokenPrice: 0,
                             verified: params.verified || false
                         };
                     }
@@ -961,20 +956,18 @@ async function fetchAlgorandAddressDetails(address) {
             })
         );
 
-        // Filter out null values and sort by balance
         const validAssets = assetDetails
             .filter(asset => asset !== null)
             .sort((a, b) => parseFloat(b.tokenBalance) - parseFloat(a.tokenBalance));
 
-        // Include ALGO in the response
         const completeBalances = [
             {
                 tokenBalance: algoBalance.toString(),
                 tokenName: 'Algorand',
                 tokenSymbol: 'ALGO',
-                tokenId: 0, // 0 represents native ALGO
+                tokenId: 0,
                 tokenDecimals: 6,
-                tokenPrice: 0, // Implement price fetching
+                tokenPrice: 0,
                 verified: true
             },
             ...validAssets
@@ -987,8 +980,10 @@ async function fetchAlgorandAddressDetails(address) {
     }
 }
 
-
-// Express route handler
+/**
+ * @dev calls the fetchAlgorandAddressDetails function for a particular address
+ * @param req -> req.params.address == the address passed
+ */
 app.get('/fetch-algorand-details/:address', async (req, res) => {
     const address = req.params.address;
 
