@@ -434,8 +434,16 @@ async function tokenTransfers(settings, address) {
 
             contractAddress = contractAddress.toLowerCase();
             if (!tokenMetadataCache.has(contractAddress) && tx.category === 'erc20') {
-                const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-                tokenMetadataCache.set(contractAddress, metadata);
+                try {
+                    const metadata = await alchemy.core.getTokenMetadata(contractAddress);
+                    tokenMetadataCache.set(contractAddress, metadata);
+                } catch (error) {
+                    if (error.code === 'SERVER_ERROR') {
+                        console.error(`Skipping token ${contractAddress} due to server error:`, error);
+                        return null;
+                    }
+                    throw error;
+                }
             }
 
             const metadata = tokenMetadataCache.get(contractAddress);
