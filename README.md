@@ -16,9 +16,7 @@ source .env
 sudo systemctl start mariadb
 node src/back-end/SecureTrace.js
 npm start
-```
-  
-> NOTE: I personally use MariaDB, you can run with mysql too  
+```  
   
 **Endpoints**  
 - `/fetch-address-details` for fetching holdings of an address  
