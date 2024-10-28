@@ -442,7 +442,7 @@ async function tokenTransfers(settings, address) {
                         console.error(`Skipping token ${contractAddress} due to server error:`, error);
                         return null;
                     }
-                    throw error;
+                    else throw error;
                 }
             }
 

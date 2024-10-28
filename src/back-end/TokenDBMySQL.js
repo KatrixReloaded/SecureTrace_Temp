@@ -63,5 +63,4 @@ async function fetchAndStoreTokens() {
     }
 }
 
-// Run the fetch and store function
 fetchAndStoreTokens();
