@@ -280,6 +280,11 @@ async function fetchCoinGeckoCoins() {
 ------------------------------------------------------------------------------ */
 
 /// @note Add native tokens as well
+/**
+ * @note Use address to fetch tokenBalances, then each token's metadata, while fetching metadata, 
+ * @note call DefiLlama API to get the token's price, match the symbol with coingecko coins list and if missing, skip.
+ * @note No need for token IDs here then, just use token address
+ */
 /** @notice fetches the address's ERC-20 token assets
  * @dev uses alchemy-sdk's `getTokenBalances` function to get a particular address's token assets
  * @param settings -> alchemy settiings for different chains
