@@ -33,7 +33,7 @@ async function fetchAndStoreTokens() {
 
         const addressMap = {};
         for (const token of addressData) {
-            addressMap[token.name.toLowerCase()] = token.address;
+            addressMap[token.name.toLowerCase()] = token.address.toLowerCase();
         }
         const logoMap = {};
         for (const token of addressData) {

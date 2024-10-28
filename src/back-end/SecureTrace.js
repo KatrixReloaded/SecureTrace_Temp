@@ -294,19 +294,42 @@ async function fetchAddressDetails(settings, address) {
         alchemy.core.getTokenBalances(address),
     ]);
 
+    const tokenMetadataCache = new Map();
     const tokenIds = new Set();
+
     const tokenDetails = balances.tokenBalances.map(async (token) => {
         const contractAddress = token.contractAddress.toLowerCase();
+        console.log(`Processing token address on ${settings.network}: ${contractAddress}`);
 
         if (!validTokenAddresses.has(contractAddress)) return null;
 
-        const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-        if (!metadata || metadata.decimals === 0 || !metadata.name || !metadata.symbol) return null;
+        if (!tokenMetadataCache.has(contractAddress)) {
+            for (let i = 0; i < 3; i++) {
+                try {
+                    const metadata = await alchemy.core.getTokenMetadata(contractAddress);
+                    if (metadata && metadata.name && metadata.symbol) {
+                        tokenMetadataCache.set(contractAddress, metadata);
+                        break;
+                    }
+                } catch (error) {
+                    if (error.code === 'SERVER_ERROR' && i < 2) {
+                        await new Promise(res => setTimeout(res, 1000));
+                    } else {
+                        console.error(`Skipping token ${contractAddress} due to server error:`, error);
+                        return null;
+                    }
+                }
+            }
+        }
+
+        const metadata = tokenMetadataCache.get(contractAddress);
+        if (!metadata) return null;
 
         const tokenIdEntry = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
         if (!tokenIdEntry) return null;
 
-        const readableBalance = ethers.formatUnits(token.tokenBalance, metadata.decimals);
+        let decimals = metadata.decimals ? metadata.decimals : 18;
+        const readableBalance = ethers.formatUnits(token.tokenBalance, decimals);
         if (parseFloat(readableBalance) > 0) {
             tokenIds.add(tokenIdEntry.id);
             return {
@@ -323,7 +346,6 @@ async function fetchAddressDetails(settings, address) {
     const resolvedTokenDetails = (await Promise.all(tokenDetails)).filter(detail => detail);
 
     const tokenPrices = await fetchTokenPrices(Array.from(tokenIds));
-
     resolvedTokenDetails.forEach(token => {
         token.tokenPrice = tokenPrices[token.tokenId]?.usd || 0;
     });
@@ -442,7 +464,7 @@ async function tokenTransfers(settings, address) {
                         console.error(`Skipping token ${contractAddress} due to server error:`, error);
                         return null;
                     }
-                    else throw error;
+                    throw error;
                 }
             }
 
