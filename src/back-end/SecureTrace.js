@@ -14,7 +14,7 @@ const algosdk = require('algosdk');
 ------------------------------------------------------------------------------ */
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = process.env.PORT || 3002;
 
 /** @dev config for Token Database */
 const pool = mysql.createPool({
@@ -198,10 +198,10 @@ async function fetchTokenPrices(tokenIds) {
 
     let newPrices = {};
     if (idsToFetch.length > 0) {
-        const ids = idsToFetch.join(',');
+        const ids = idsToFetch.map(id => `coingecko:${id}`).join(',');
 
         try {
-            const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+            const response = await fetch(`https://coins.llama.fi/prices/current/${ids}?searchWidth=3h`);
 
             if (response.status === 429) {
                 console.error('Rate limit exceeded. Please wait before making more requests.');
@@ -474,7 +474,7 @@ async function tokenTransfers(settings, address) {
             }
 
             const metadata = tokenMetadataCache.get(contractAddress);
-            if (!metadata || metadata.decimals === 0 || !metadata.name || !metadata.symbol) {
+            if (!metadata || !metadata.name || !metadata.symbol) {
                 return null;
             }
             const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
@@ -876,7 +876,7 @@ app.get('/top-tokens', async (req, res) => {
         const evmTokenIds = new Set(tokenNameToId.map(token => token.id));
 
         // Check cache (cache for 5 minutes)
-        if (cache.data && Date.now() - cache.lastFetched < 5 * 60 * 1000) {
+        if (cache.data && Date.now() - cache.lastFetched < 1 * 60 * 1000) {
             return res.json(cache.data);
         }
 
@@ -895,7 +895,7 @@ app.get('/top-tokens', async (req, res) => {
 
         // Update cache if data changed
         if (response.status === 200) {
-            cache.data = response.data.filter(token => evmTokenIds.has(token.id));
+            cache.data = response.data.filter(token => (evmTokenIds.has(token.id) || token.id === 'ethereum'));
             cache.lastFetched = Date.now();
             cache.etag = response.headers.etag;
             res.json(cache.data);
