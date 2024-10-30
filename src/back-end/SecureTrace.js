@@ -368,7 +368,7 @@ app.get('/fetch-address-details/:address', async (req, res) => {
         opt: settingsOptimism,
         pol: settingsPolygon,
         zk: settingsZksync,
-        avax: settingsAvalanche,
+        // avax: settingsAvalanche,
         blast: settingsBlast,
     }
 
