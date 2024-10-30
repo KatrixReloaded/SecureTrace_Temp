@@ -150,7 +150,7 @@ async function fetchTokenList() {
         console.error('Error fetching token list from database:', error);
         return new Set(); 
     } finally {
-        connection.release(); // Ensure the connection is closed
+        connection.release();
     }
 }
 
@@ -571,6 +571,7 @@ app.get('/token-transfers/:address', async (req, res) => {
 ------------------------------ TRANSACTION TTV ----------------------------------
 ------------------------------------------------------------------------------ */
 
+// @note Use alchemy__getTokenMetadata instead of using ethers.Contract (?)
 /** @notice fetches all internal transfer of tokens in a single transaction
  * @dev fetches tx receipt for a particular tx hash and filters them for ERC-20 transfers
  * @param txHash -> the tx hash for which we are fetching the internal transfers
