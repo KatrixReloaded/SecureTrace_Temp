@@ -15,21 +15,16 @@ const pool = mysql.createPool({
 async function fetchAndStoreTokens() {
     const connection = await pool.getConnection();
     try {
-        const response = await axios.get('https://api.coingecko.com/api/v3/coins/list');
-        const tokens = response.data;
+        const addressResponse = await axios.get('https://tokens.coingecko.com/uniswap/all.json');
+        const addressData = addressResponse.data.tokens;
 
-        await connection.execute('DELETE FROM tokens');
-
-        const insertQuery = 'INSERT INTO tokens (id, symbol, name, address) VALUES (?, ?, ?, ?)';
+        const insertQuery = 'INSERT INTO DLTokens (address, symbol, logo_url, name, price, chain) VALUES (?, ?, ?, ?)';
         const insertPromises = tokens.map(token => {
             return connection.execute(insertQuery, [token.id, token.symbol, token.name, null]);
         });
 
         await Promise.all(insertPromises);
         console.log('Tokens stored successfully!');
-
-        const addressResponse = await axios.get('https://tokens.coingecko.com/uniswap/all.json');
-        const addressData = addressResponse.data.tokens;
 
         const addressMap = {};
         for (const token of addressData) {
