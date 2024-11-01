@@ -142,7 +142,7 @@ async function fetchTokenList() {
     try {
         if(!validTokenAddresses){
             const [rows] = await connection.execute('SELECT address FROM DLTokens');
-            return new Set(rows.map(token => token.address.toLowerCase()));
+            return new Set(rows.map(token => token.address));
         } else {
             return validTokenAddresses;
         }
@@ -193,7 +193,7 @@ async function fetchTokenPrices(addresses) {
     const connection = await pool.getConnection();
     const prices = async (ads) => { 
         try {
-            if (tokenIds.length === 0) {
+            if (ads.length === 0) {
                 return {};
             }
             const placeholders = ads.map(() => '?').join(',');
@@ -203,7 +203,7 @@ async function fetchTokenPrices(addresses) {
 
             const tokenPrices = {};
             for (const row of rows) {
-                tokenPrices[row.address] = { usd: row.tokenPrice };
+                tokenPrices[row.address] = { usd: row.price };
             }
 
             return tokenPrices;
@@ -228,10 +228,12 @@ async function fetchTokenData() {
     const connection = await pool.getConnection();
     try {
         if(!tokenNameToId) {
-            const [rows] = await connection.execute('SELECT name, symbol, decimals FROM DLTokens');
+            const [rows] = await connection.execute('SELECT address, name, symbol, decimals FROM DLTokens');
             return rows.map(token => ({
-                name: token.name.toLowerCase(),
-                id: token.id
+                address: token.address,
+                name: token.name ? token.name : null,
+                symbol: token.symbol,
+                decimals: token.decimals ? token.decimals : 18,
             }));
         } else {
             return tokenNameToId;
@@ -281,55 +283,54 @@ async function fetchCoinGeckoCoins() {
 async function fetchAddressDetails(settings, address) {
     const alchemy = new Alchemy(settings);
 
-    const [validTokenAddresses, tokenNameToId, balances] = await Promise.all([
+    const [validTokenAddresses, metadata, balances] = await Promise.all([
         fetchTokenList(),
         fetchTokenData(),
         alchemy.core.getTokenBalances(address),
     ]);
 
-    const tokenMetadataCache = new Map();
-    const tokenIds = new Set();
+    // const tokenMetadataCache = new Map();
+    const addresses = new Set();
 
     const tokenDetails = balances.tokenBalances.map(async (token) => {
-        const contractAddress = token.contractAddress.toLowerCase();
-        console.log(`Processing token address on ${settings.network}: ${contractAddress}`);
+        const contractAddress = token.contractAddress;
+        // console.log(`Processing token address on ${settings.network}: ${contractAddress}`);
 
         if (!validTokenAddresses.has(contractAddress)) return null;
 
-        if (!tokenMetadataCache.has(contractAddress)) {
-            for (let i = 0; i < 3; i++) {
-                try {
-                    const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-                    if (metadata && metadata.name && metadata.symbol) {
-                        tokenMetadataCache.set(contractAddress, metadata);
-                        break;
-                    }
-                } catch (error) {
-                    if (error.code === 'SERVER_ERROR' && i < 2) {
-                        await new Promise(res => setTimeout(res, 1000));
-                    } else {
-                        console.error(`Skipping token ${contractAddress} due to server error:`, error);
-                        return null;
-                    }
-                }
-            }
-        }
+        // if (!tokenMetadataCache.has(contractAddress)) {
+        //     for (let i = 0; i < 3; i++) {
+        //         try {
+        //             const metadata = await alchemy.core.getTokenMetadata(contractAddress);
+        //             if (metadata && metadata.name && metadata.symbol) {
+        //                 tokenMetadataCache.set(contractAddress, metadata);
+        //                 break;
+        //             }
+        //         } catch (error) {
+        //             if (error.code === 'SERVER_ERROR' && i < 2) {
+        //                 await new Promise(res => setTimeout(res, 1000));
+        //             } else {
+        //                 console.error(`Skipping token ${contractAddress} due to server error:`, error);
+        //                 return null;
+        //             }
+        //         }
+        //     }
+        // }
 
-        const metadata = tokenMetadataCache.get(contractAddress);
-        if (!metadata) return null;
+        const tokenMetadata = metadata.find(m => m.address === contractAddress);
+        if (!tokenMetadata) return null;
 
-        const tokenIdEntry = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
-        if (!tokenIdEntry) return null;
+        // const tokenIdEntry = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
+        // if (!tokenIdEntry) return null;
 
-        let decimals = metadata.decimals ? metadata.decimals : 18;
-        const readableBalance = ethers.formatUnits(token.tokenBalance, decimals);
+        const readableBalance = ethers.formatUnits(token.tokenBalance, tokenMetadata.decimals);
         if (parseFloat(readableBalance) > 0) {
-            tokenIds.add(tokenIdEntry.id);
+            addresses.add(contractAddress);
             return {
                 tokenBalance: readableBalance,
-                tokenName: metadata.name,
-                tokenSymbol: metadata.symbol,
-                tokenId: tokenIdEntry.id,
+                tokenName: tokenMetadata.name,
+                tokenSymbol: tokenMetadata.symbol,
+                tokenAddress: contractAddress,
                 tokenPrice: 0,
             };
         }
@@ -338,9 +339,9 @@ async function fetchAddressDetails(settings, address) {
 
     const resolvedTokenDetails = (await Promise.all(tokenDetails)).filter(detail => detail);
 
-    const tokenPrices = await fetchTokenPrices(Array.from(tokenIds));
+    const tokenPrices = await fetchTokenPrices(Array.from(addresses));
     resolvedTokenDetails.forEach(token => {
-        token.tokenPrice = tokenPrices[token.tokenId]?.usd || 0;
+        token.tokenPrice = tokenPrices[token.tokenAddress]?.usd || 0;
     });
 
     return resolvedTokenDetails;
