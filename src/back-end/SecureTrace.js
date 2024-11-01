@@ -141,7 +141,7 @@ async function fetchTokenList() {
     const connection = await pool.getConnection();
     try {
         if(!validTokenAddresses){
-            const [rows] = await connection.execute('SELECT address FROM tokens');
+            const [rows] = await connection.execute('SELECT address FROM DLTokens');
             return new Set(rows.map(token => token.address.toLowerCase()));
         } else {
             return validTokenAddresses;

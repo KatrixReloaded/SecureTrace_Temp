@@ -46,27 +46,26 @@ async function fetchAndStoreTokens() {
 async function fetchPrices() {
     const connection = await pool.getConnection();
     try {
-        const [tokens] = await connection.execute('SELECT address FROM DLTokens WHERE price IS NULL');
+        const [tokens] = await connection.execute('SELECT chain, address FROM DLTokens');
         if (tokens.length === 0) return;
 
         const addressBatches = [];
-        const batchSize = 100; // Adjust based on your cookie size limit
+        const batchSize = 100;
 
         for (let i = 0; i < tokens.length; i += batchSize) {
             addressBatches.push(tokens.slice(i, i + batchSize));
         }
 
         for (const batch of addressBatches) {
-            const coinsParam = batch.map(token => `ethereum:${token.address}`).join(',');
+            const coinsParam = batch.map(token => `${token.chain}:${token.address}`).join(',');
+            console.log(coinsParam);
 
             const priceResponse = await axios.get(`https://coins.llama.fi/prices/current/${coinsParam}`);
             const prices = priceResponse.data.coins;
-            //console.log(prices);
 
             const updatePromises = [];
             for (const token of batch) {
-                const priceData = prices[`ethereum:${token.address}`];
-                //console.log(priceData);
+                const priceData = prices[`${token.chain}:${token.address}`];
                 if (priceData) {
                     updatePromises.push(
                         connection.execute('UPDATE DLTokens SET price = ? WHERE address = ?', [priceData.price, token.address])
@@ -77,10 +76,6 @@ async function fetchPrices() {
             await Promise.all(updatePromises);
         }
 
-        const addressesToKeep = addressBatches.flat().map(token => `?`).join(',');
-        const deleteQuery = `DELETE FROM DLTokens WHERE address NOT IN (${addressesToKeep})`;
-
-        await connection.execute(deleteQuery, addressBatches.flat().map(token => token.address));
         console.log('Token prices updated successfully!');
     } catch (error) {
         console.error('Error updating token prices:', error);
@@ -89,9 +84,9 @@ async function fetchPrices() {
     }
 }
 
-async function updateChainId() {
-    const connection = await pool.getConnection();
-    await connection.execute('UPDATE DLTokens SET chain = ? WHERE address IS NOT NULL', ["ethereum"]);
-}
+// async function updateChainId() {
+//     const connection = await pool.getConnection();
+//     await connection.execute('UPDATE DLTokens SET chain = ?', ["ethereum"]);
+// }
 
 fetchPrices();
