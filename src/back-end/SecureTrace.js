@@ -124,7 +124,7 @@ async function addOrUpdateTokenPrice(id, tokenPrice) {
  /** @dev just in case we need to set a timeout 
   * @param target function to set a timeout for it
  */
- async function fetchWithTimeout(fetchFunction, timeout = 120000) {
+ async function fetchWithTimeout(fetchFunction, timeout = 5000) {
      const abortController = new AbortController();
      const id = setTimeout(() => abortController.abort(), timeout);
      try {
@@ -158,80 +158,68 @@ async function fetchTokenList() {
  * @dev returns token prices for tokens whose prices have been updated less than 5 minutes ago
  * @param tokenIds -> set of IDs of tokens for which the USD value is fetched
  */
-async function getUpToDateTokenPrices(tokenIds) {
-    const connection = await pool.getConnection();
+// async function getUpToDateTokenPrices(addresses) {
+//     const connection = await pool.getConnection();
+//     try {
+//         if (tokenIds.length === 0) {
+//             return {};
+//         }
+//         const placeholders = addresses.map(() => '?').join(',');
+//         const query = `SELECT address, price FROM DLTokens WHERE address IN (${placeholders})`;
 
-    try {
-        if (tokenIds.length === 0) {
-            return {};
-        }
-        const placeholders = tokenIds.map(() => '?').join(',');
-        const query = `SELECT id, tokenPrice FROM tokenPrices WHERE id IN (${placeholders}) AND TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) < 5`;
+//         const [rows] = await connection.execute(query, addresses);
 
-        const [rows] = await connection.execute(query, tokenIds);
+//         const tokenPrices = {};
+//         for (const row of rows) {
+//             tokenPrices[row.address] = { usd: row.tokenPrice };
+//         }
 
-        const tokenPrices = {};
-        for (const row of rows) {
-            tokenPrices[row.id] = { usd: row.tokenPrice };
-        }
-
-        return tokenPrices;
-    } catch (error) {
-        console.error('Error fetching up-to-date token prices:', error);
-        return {};
-    } finally {
-        connection.release();
-    }
-}
+//         return tokenPrices;
+//     } catch (error) {
+//         console.error('Error fetching up-to-date token prices:', error);
+//         return {};
+//     } finally {
+//         connection.release();
+//     }
+// }
 
 /** @notice Fetches current token price for a set of tokens
  * @dev fetches the current price based on tokenIds set
  * @param tokenIds -> set of IDs of tokens for which the USD value is fetched
  */
-async function fetchTokenPrices(tokenIds) {
-    const uniqueTokenIds = [...new Set(tokenIds)];
+async function fetchTokenPrices(addresses) {
+    const uniqueAddresses = [...new Set(addresses)];
 
-    const upToDatePrices = await getUpToDateTokenPrices(uniqueTokenIds);
-    const upToDatePriceIds = upToDatePrices ? new Set(Object.keys(upToDatePrices)) : new Set();
-
-    const idsToFetch = uniqueTokenIds.filter(id => !upToDatePriceIds.has(id));;
-
-    let newPrices = {};
-    if (idsToFetch.length > 0) {
-        const ids = idsToFetch.map(id => `coingecko:${id}`).join(',');
-
+    const connection = await pool.getConnection();
+    const prices = async (ads) => { 
         try {
-            const response = await fetch(`https://coins.llama.fi/prices/current/${ids}?searchWidth=3h`);
+            if (tokenIds.length === 0) {
+                return {};
+            }
+            const placeholders = ads.map(() => '?').join(',');
+            const query = `SELECT address, price FROM DLTokens WHERE address IN (${placeholders})`;
 
-            if (response.status === 429) {
-                console.error('Rate limit exceeded. Please wait before making more requests.');
-                await new Promise(resolve => setTimeout(resolve, 10000));
-                return fetchTokenPrices(tokenIds);
+            const [rows] = await connection.execute(query, ads);
+
+            const tokenPrices = {};
+            for (const row of rows) {
+                tokenPrices[row.address] = { usd: row.tokenPrice };
             }
 
-            if (!response.ok) {
-                throw new Error(`Error fetching prices: ${response.statusText}`);
-            }
-
-            newPrices = await response.json();
-
-            for (const [tokenId, priceData] of Object.entries(newPrices)) {
-                const price = parseFloat(priceData.usd).toFixed(8);
-                await addOrUpdateTokenPrice(tokenId, price);
-            }
-
+            return tokenPrices;
         } catch (error) {
-            console.error('Error fetching token prices:', error);
+            console.error('Error fetching up-to-date token prices:', error);
             return {};
+        } finally {
+            connection.release();
         }
-    }
+    };
 
-    const allPrices = { ...upToDatePrices, ...newPrices };
+    const upToDatePrices = await prices(uniqueAddresses);
+    const allPrices = { ...upToDatePrices };
 
     return allPrices;
 }
-
-
 
 /** @notice function to fetch a token's ID
  * @dev accesses the tokenDB to return id values for respective token names
@@ -240,7 +228,7 @@ async function fetchTokenData() {
     const connection = await pool.getConnection();
     try {
         if(!tokenNameToId) {
-            const [rows] = await connection.execute('SELECT name, id FROM tokens');
+            const [rows] = await connection.execute('SELECT name, symbol, decimals FROM DLTokens');
             return rows.map(token => ({
                 name: token.name.toLowerCase(),
                 id: token.id
