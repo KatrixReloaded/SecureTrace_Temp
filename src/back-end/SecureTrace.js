@@ -95,26 +95,26 @@ let tokenNameToId;
  * @param id -> the token ID for which the price is being added
  * @param tokenPrice -> the price of the token
  */
-async function addOrUpdateTokenPrice(id, tokenPrice) {
-    try {
-        const connection = await pool.getConnection();
+// async function addOrUpdateTokenPrice(id, tokenPrice) {
+//     try {
+//         const connection = await pool.getConnection();
 
-        const sql = `
-            INSERT INTO tokenPrices (id, tokenPrice)
-            VALUES (?, ?)
-            ON DUPLICATE KEY UPDATE
-                tokenPrice = IF(TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5, VALUES(tokenPrice), tokenPrice),
-                createdAt = IF(TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5, CURRENT_TIMESTAMP, createdAt)
-        `;
+//         const sql = `
+//             INSERT INTO tokenPrices (id, tokenPrice)
+//             VALUES (?, ?)
+//             ON DUPLICATE KEY UPDATE
+//                 tokenPrice = IF(TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5, VALUES(tokenPrice), tokenPrice),
+//                 createdAt = IF(TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5, CURRENT_TIMESTAMP, createdAt)
+//         `;
 
-        await connection.execute(sql, [id, tokenPrice]);
+//         await connection.execute(sql, [id, tokenPrice]);
 
-        connection.release();
-    } catch (error) {
-        console.error('Error inserting or updating token price:', error);
-        throw error;
-    }
-}
+//         connection.release();
+//     } catch (error) {
+//         console.error('Error inserting or updating token price:', error);
+//         throw error;
+//     }
+// }
 
 
 /** ----------------------------------------------------------------------------- 
@@ -141,7 +141,7 @@ async function fetchTokenList() {
     const connection = await pool.getConnection();
     try {
         if(!validTokenAddresses){
-            const [rows] = await connection.execute('SELECT address FROM DLTokens');
+            const [rows] = await connection.execute('SELECT address FROM TempTokens');
             return new Set(rows.map(token => token.address));
         } else {
             return validTokenAddresses;
@@ -197,7 +197,7 @@ async function fetchTokenPrices(addresses) {
                 return {};
             }
             const placeholders = ads.map(() => '?').join(',');
-            const query = `SELECT address, price FROM DLTokens WHERE address IN (${placeholders})`;
+            const query = `SELECT chain, address, price FROM TempTokens WHERE address IN (${placeholders})`;
 
             const [rows] = await connection.execute(query, ads);
 
@@ -228,8 +228,9 @@ async function fetchTokenData() {
     const connection = await pool.getConnection();
     try {
         if(!tokenNameToId) {
-            const [rows] = await connection.execute('SELECT address, name, symbol, decimals FROM DLTokens');
+            const [rows] = await connection.execute('SELECT chain, address, name, symbol, decimals FROM TempTokens');
             return rows.map(token => ({
+                chain: token.chain,
                 address: token.address,
                 name: token.name ? token.name : null,
                 symbol: token.symbol,
@@ -289,44 +290,21 @@ async function fetchAddressDetails(settings, address) {
         alchemy.core.getTokenBalances(address),
     ]);
 
-    // const tokenMetadataCache = new Map();
     const addresses = new Set();
 
     const tokenDetails = balances.tokenBalances.map(async (token) => {
         const contractAddress = token.contractAddress;
-        // console.log(`Processing token address on ${settings.network}: ${contractAddress}`);
 
         if (!validTokenAddresses.has(contractAddress)) return null;
 
-        // if (!tokenMetadataCache.has(contractAddress)) {
-        //     for (let i = 0; i < 3; i++) {
-        //         try {
-        //             const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-        //             if (metadata && metadata.name && metadata.symbol) {
-        //                 tokenMetadataCache.set(contractAddress, metadata);
-        //                 break;
-        //             }
-        //         } catch (error) {
-        //             if (error.code === 'SERVER_ERROR' && i < 2) {
-        //                 await new Promise(res => setTimeout(res, 1000));
-        //             } else {
-        //                 console.error(`Skipping token ${contractAddress} due to server error:`, error);
-        //                 return null;
-        //             }
-        //         }
-        //     }
-        // }
-
         const tokenMetadata = metadata.find(m => m.address === contractAddress);
         if (!tokenMetadata) return null;
-
-        // const tokenIdEntry = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
-        // if (!tokenIdEntry) return null;
 
         const readableBalance = ethers.formatUnits(token.tokenBalance, tokenMetadata.decimals);
         if (parseFloat(readableBalance) > 0) {
             addresses.add(contractAddress);
             return {
+                chain: tokenMetadata.chain,
                 tokenBalance: readableBalance,
                 tokenName: tokenMetadata.name,
                 tokenSymbol: tokenMetadata.symbol,
@@ -356,7 +334,7 @@ app.get('/fetch-address-details/:address', async (req, res) => {
         arb: settingsArbitrum,
         opt: settingsOptimism,
         pol: settingsPolygon,
-        zk: settingsZksync,
+        // zk: settingsZksync,
         // avax: settingsAvalanche,
         blast: settingsBlast,
     }
@@ -388,7 +366,7 @@ app.get('/fetch-address-details/:address', async (req, res) => {
 async function tokenTransfers(settings, address) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
-    tokenNameToId = await fetchTokenData();
+    const metadata = await fetchTokenData();
 
     const fetchTransfers = async (direction) => {
         let transfers = {};
@@ -415,7 +393,6 @@ async function tokenTransfers(settings, address) {
             });
         }
 
-        const tokenMetadataCache = new Map();
         let filteredTxs = transfers.transfers.filter(tx => {
             if (tx.category === 'erc20') {
                 const isValidToken = validTokenAddresses.has(tx.rawContract.address.toLowerCase());
@@ -437,37 +414,19 @@ async function tokenTransfers(settings, address) {
                     value: tx.value,
                     decimals: tx.rawContract ? tx.rawContract.decimals : 18,
                     asset: tx.asset,
-                    assetType: 'external',
                     tokenAddress: null,
                     timestamp: tx.metadata.blockTimestamp,
                     tokenPrice: null,
                     tokenName: tx.asset === 'MATIC' ? "Polygon" : "Ethereum",
-                    tokenId: tx.asset === 'MATIC' ? "matic-network" : "ethereum",
                 };
             } else if (!contractAddress) {
                 return null;
             }
 
             contractAddress = contractAddress.toLowerCase();
-            if (!tokenMetadataCache.has(contractAddress) && tx.category === 'erc20') {
-                try {
-                    const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-                    tokenMetadataCache.set(contractAddress, metadata);
-                } catch (error) {
-                    if (error.code === 'SERVER_ERROR') {
-                        console.error(`Skipping token ${contractAddress} due to server error:`, error);
-                        return null;
-                    }
-                    throw error;
-                }
-            }
 
-            const metadata = tokenMetadataCache.get(contractAddress);
-            if (!metadata || !metadata.name || !metadata.symbol) {
-                return null;
-            }
-            const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
-            if(!tokenId) {
+            const tokenMetadata = metadata.find(m => m.address === contractAddress);
+            if (!tokenMetadata) {
                 return null;
             }
 
@@ -476,25 +435,24 @@ async function tokenTransfers(settings, address) {
                 from: tx.from,
                 to: tx.to,
                 value: tx.value,
-                decimals: tx.rawContract ? tx.rawContract.decimals : 18,
-                asset: tx.asset,
-                assetType: tx.category === 'erc20' ? 'erc20' : 'external',
-                tokenAddress: tx.rawContract ? tx.rawContract.address : null,
+                decimals: tokenMetadata.decimals ? tokenMetadata.decimals : 18,
+                symbol: tokenMetadata.symbol,
+                tokenAddress: contractAddress,
                 timestamp: tx.metadata.blockTimestamp,
                 tokenPrice: null,
-                tokenName: metadata.name,
-                tokenId: tokenId.id,
+                tokenName: tokenMetadata.name,
+                chain: tokenMetadata.chain
             };
         }));
 
         filteredTxs = filteredTxs.filter(tx => tx !== null);
 
-        const tokenIds = filteredTxs.map(tx => tx.tokenId);
+        const addresses = filteredTxs.map(tx => tx.tokenAddress);
 
-        const tokenPrices = await fetchTokenPrices(tokenIds);
+        const tokenPrices = await fetchTokenPrices(addresses);
         filteredTxs.forEach(tx => {
-            const tokenId = tx.tokenId;
-            tx.tokenPrice = tokenPrices[tokenId] ? tokenPrices[tokenId].usd : 0;
+            const address = tx.tokenAddress;
+            tx.tokenPrice = tokenPrices[address] ? tokenPrices[address].usd : 0;
             console.log(tx.tokenName, tx.value, tx.tokenPrice, "USD");
         });
 
@@ -535,7 +493,7 @@ app.get('/token-transfers/:address', async (req, res) => {
         arb: settingsArbitrum,
         opt: settingsOptimism,
         pol: settingsPolygon,
-        zk: settingsZksync,
+        // zk: settingsZksync,
     }
     const allFromTransfers = [];
     const allToTransfers = [];

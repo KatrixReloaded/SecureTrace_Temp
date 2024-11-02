@@ -117,7 +117,7 @@ async function scrapeFromMultipleExplorers(urls) {
         'https://polygonscan.com/tokens?ps=100&p=7',
         'https://polygonscan.com/tokens?ps=100&p=8',
         'https://polygonscan.com/tokens?ps=100&p=9',
-        'https://explorer.zksync.io/tokens',
+        // 'https://explorer.zksync.io/tokens',
         'https://arbiscan.io/tokens?ps=100',
         'https://arbiscan.io/tokens?ps=100&p=2',
         'https://arbiscan.io/tokens?ps=100&p=3',
