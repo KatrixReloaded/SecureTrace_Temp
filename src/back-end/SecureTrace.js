@@ -330,20 +330,31 @@ async function fetchAddressDetails(settings, address) {
 app.get('/fetch-address-details/:address', async (req, res) => {
     const address = req.params.address;
     const chains = {
-        eth: settingsEthereum,
-        arb: settingsArbitrum,
-        opt: settingsOptimism,
-        pol: settingsPolygon,
+        ethereum: settingsEthereum,
+        arbitrum: settingsArbitrum,
+        optimism: settingsOptimism,
+        polygon: settingsPolygon,
         // zk: settingsZksync,
         // avax: settingsAvalanche,
         blast: settingsBlast,
-    }
+    };
 
     if (!address) {
         return res.status(400).json({ error: 'Address is required' });
     }
+    
     try {
-        const tokens = await Promise.all(Object.values(chains).map(chain => fetchAddressDetails({apiKey: chain.apiKey, network: chain.network}, address)));
+        // Fetch data in parallel for each chain
+        const results = await Promise.all(
+            Object.entries(chains).map(([chainKey, chainSettings]) =>
+                fetchAddressDetails({ apiKey: chainSettings.apiKey, network: chainSettings.network }, address)
+                    .then(tokens => tokens.map(token => ({ ...token, chain: chainKey })))
+            )
+        );
+
+        // Flatten the results array and merge data from all chains
+        const tokens = results.flat();
+
         res.json({ tokens });
     } catch (error) {
         console.error('Error fetching address details:', error);
