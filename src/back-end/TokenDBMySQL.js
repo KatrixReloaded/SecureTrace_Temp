@@ -12,37 +12,6 @@ const pool = mysql.createPool({
     queueLimit: 0,
 });
 
-// async function fetchAndStoreTokens() {
-//     const connection = await pool.getConnection();
-//     try {
-//         const response = await axios.get('https://tokens.coingecko.com/uniswap/all.json');
-//         const tokens = response.data.tokens;
-
-//         await connection.execute('DELETE FROM DLTokens');
-
-//         const insertQuery = `INSERT IGNORE INTO DLTokens (address, name, symbol, decimals, logo_url) VALUES (?, ?, ?, ?, ?)`;
-
-//         const insertPromises = tokens
-//             .filter(token => token.address && token.symbol)
-//             .map(token => {
-//                 return connection.execute(insertQuery, [
-//                     token.address.toLowerCase(),
-//                     token.name || null,
-//                     token.symbol,
-//                     token.decimals || 18,
-//                     token.logoURI || null,
-//                 ]);
-//             });
-
-//         await Promise.all(insertPromises);
-//         console.log('Tokens stored successfully!');
-//     } catch (error) {
-//         console.error('Error fetching or updating tokens:', error);
-//     } finally {
-//         connection.release();
-//     }
-// }
-
 async function fetchPrices() {
     const connection = await pool.getConnection();
     try {
@@ -86,10 +55,5 @@ async function fetchPrices() {
         connection.release();
     }
 }
-
-// async function updateChainId() {
-//     const connection = await pool.getConnection();
-//     await connection.execute('UPDATE DLTokens SET chain = ?', ["ethereum"]);
-// }
 
 fetchPrices();
