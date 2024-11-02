@@ -46,7 +46,7 @@ async function fetchAndStoreTokens() {
 async function fetchPrices() {
     const connection = await pool.getConnection();
     try {
-        const [tokens] = await connection.execute('SELECT chain, address FROM DLTokens');
+        const [tokens] = await connection.execute('SELECT chain, address FROM TempTokens');
         if (tokens.length === 0) return;
 
         const addressBatches = [];
