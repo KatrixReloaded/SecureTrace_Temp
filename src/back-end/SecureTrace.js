@@ -702,7 +702,7 @@ async function recentTxs(settings) {
         const alchemy = new Alchemy(settings);
         let currentBlock = await alchemy.core.getBlockNumber();
         const validTokenAddresses = await fetchTokenList();
-        const tokenNameToId = await fetchTokenData();
+        const metadata = await fetchTokenData();
 
         let txs = {};
         let filteredTxs;
@@ -713,7 +713,7 @@ async function recentTxs(settings) {
             txs = await alchemy.core.getAssetTransfers({
                 fromBlock: blockNumber,
                 toBlock: blockNumber,
-                category: ['erc20', 'external'],
+                category: ['erc20'],
                 withMetadata: true,
                 excludeZeroValue: true,
                 maxCount: 30,
@@ -722,8 +722,6 @@ async function recentTxs(settings) {
             filteredTxs = txs.transfers.filter(tx => {
                 if (tx.category === 'erc20') {
                     return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
-                } else if (tx.category === 'external') {
-                    return true;
                 }
                 return false;
             });
@@ -733,38 +731,42 @@ async function recentTxs(settings) {
             }
         }
         
-        const tokenMetadataCache = new Map();
-        let tokenIds = [];
+        // const tokenMetadataCache = new Map();
+        // let tokenIds = [];
+        const addresses = new Set();
         for (const tx of filteredTxs) {
             
             if (tx.category === 'erc20') {
                 const contractAddress = tx.rawContract.address.toLowerCase();
 
-                if (!tokenMetadataCache.has(contractAddress)) {
-                    const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-                    tokenMetadataCache.set(contractAddress, metadata);
-                }
+                // if (!tokenMetadataCache.has(contractAddress)) {
+                //     const metadata = await alchemy.core.getTokenMetadata(contractAddress);
+                //     tokenMetadataCache.set(contractAddress, metadata);
+                // }
 
-                const metadata = tokenMetadataCache.get(contractAddress);
-                const tokenName = metadata?.name?.toLowerCase();
-                if (tokenName) {
-                    const tokenId = tokenNameToId.find(t => t.name === tokenName);
-                    if (tokenId) {
-                        tx.tokenId = tokenId.id;
-                        tokenIds.push(tokenId.id);
-                    }
-                }
-            } else if (tx.category === 'external') {
-                tx.tokenId = tx.asset === "MATIC" ? "matic-network" : "ethereum";
-                tokenIds.push(tx.tokenId);
+                const tokenMetadata = metadata.find(m => m.address === contractAddress);
+                if (!tokenMetadata) return null;
+
+                addresses.add(contractAddress);
+                // if (tokenName) {
+                    // const tokenId = tokenNameToId.find(t => t.name === tokenName);
+                    // if (tokenId) {
+                    //     tx.tokenId = tokenId.id;
+                    //     tokenIds.push(tokenId.id);
+                    // }
+                // }
+            // } else if (tx.category === 'external') {
+            //     tx.tokenId = tx.asset === "MATIC" ? "matic-network" : "ethereum";
+            //     tokenIds.push(tx.tokenId);
             }
         }
 
-        const tokenPrices = await fetchTokenPrices(tokenIds);
+        const tokenPrices = await fetchTokenPrices(addresses);
 
         for (const tx of filteredTxs) {
-            if (tx.tokenId && tokenPrices[tx.tokenId]) {
-                tx.tokenPrice = tokenPrices[tx.tokenId].usd || 0;
+            const contractAddress = tx.rawContract.address.toLowerCase();
+            if (contractAddress && tokenPrices[contractAddress]) {
+                tx.tokenPrice = tokenPrices[contractAddress].usd || 0;
             }
         }
 
@@ -793,7 +795,7 @@ app.get('/recent-txs', async (req, res) => {
             eth: settingsEthereum,
             arb: settingsArbitrum,
             opt: settingsOptimism,
-            zk: settingsZksync,
+            pol: settingsPolygon,
         };
         const allTransfers = await Promise.all(Object.values(chains).map(chain => recentTxs({apiKey: chain.apiKey, network: chain.network})));
         console.log(allTransfers);
