@@ -12,36 +12,36 @@ const pool = mysql.createPool({
     queueLimit: 0,
 });
 
-async function fetchAndStoreTokens() {
-    const connection = await pool.getConnection();
-    try {
-        const response = await axios.get('https://tokens.coingecko.com/uniswap/all.json');
-        const tokens = response.data.tokens;
+// async function fetchAndStoreTokens() {
+//     const connection = await pool.getConnection();
+//     try {
+//         const response = await axios.get('https://tokens.coingecko.com/uniswap/all.json');
+//         const tokens = response.data.tokens;
 
-        await connection.execute('DELETE FROM DLTokens');
+//         await connection.execute('DELETE FROM DLTokens');
 
-        const insertQuery = `INSERT IGNORE INTO DLTokens (address, name, symbol, decimals, logo_url) VALUES (?, ?, ?, ?, ?)`;
+//         const insertQuery = `INSERT IGNORE INTO DLTokens (address, name, symbol, decimals, logo_url) VALUES (?, ?, ?, ?, ?)`;
 
-        const insertPromises = tokens
-            .filter(token => token.address && token.symbol)
-            .map(token => {
-                return connection.execute(insertQuery, [
-                    token.address.toLowerCase(),
-                    token.name || null,
-                    token.symbol,
-                    token.decimals || 18,
-                    token.logoURI || null,
-                ]);
-            });
+//         const insertPromises = tokens
+//             .filter(token => token.address && token.symbol)
+//             .map(token => {
+//                 return connection.execute(insertQuery, [
+//                     token.address.toLowerCase(),
+//                     token.name || null,
+//                     token.symbol,
+//                     token.decimals || 18,
+//                     token.logoURI || null,
+//                 ]);
+//             });
 
-        await Promise.all(insertPromises);
-        console.log('Tokens stored successfully!');
-    } catch (error) {
-        console.error('Error fetching or updating tokens:', error);
-    } finally {
-        connection.release();
-    }
-}
+//         await Promise.all(insertPromises);
+//         console.log('Tokens stored successfully!');
+//     } catch (error) {
+//         console.error('Error fetching or updating tokens:', error);
+//     } finally {
+//         connection.release();
+//     }
+// }
 
 async function fetchPrices() {
     const connection = await pool.getConnection();
@@ -68,7 +68,10 @@ async function fetchPrices() {
                 const priceData = prices[`${token.chain}:${token.address}`];
                 if (priceData) {
                     updatePromises.push(
-                        connection.execute('UPDATE DLTokens SET price = ? WHERE address = ?', [priceData.price, token.address])
+                        connection.execute('UPDATE TempTokens SET price = ? WHERE address = ?', [priceData.price ? priceData.price : null, token.address])
+                    );
+                    updatePromises.push(
+                        connection.execute('UPDATE TempTokens SET decimals = ? WHERE address = ?', [priceData.decimals ? priceData.decimals : 18, token.address])
                     );
                 }
             }
