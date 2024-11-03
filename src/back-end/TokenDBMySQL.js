@@ -12,55 +12,48 @@ const pool = mysql.createPool({
     queueLimit: 0,
 });
 
-async function fetchAndStoreTokens() {
+async function fetchPrices() {
     const connection = await pool.getConnection();
     try {
-        const response = await axios.get('https://api.coingecko.com/api/v3/coins/list');
-        const tokens = response.data;
+        const [tokens] = await connection.execute('SELECT chain, address FROM TempTokens');
+        if (tokens.length === 0) return;
 
-        await connection.execute('DELETE FROM tokens');
+        const addressBatches = [];
+        const batchSize = 100;
 
-        const insertQuery = 'INSERT INTO tokens (id, symbol, name, address) VALUES (?, ?, ?, ?)';
-        const insertPromises = tokens.map(token => {
-            return connection.execute(insertQuery, [token.id, token.symbol, token.name, null]);
-        });
-
-        await Promise.all(insertPromises);
-        console.log('Tokens stored successfully!');
-
-        const addressResponse = await axios.get('https://tokens.coingecko.com/uniswap/all.json');
-        const addressData = addressResponse.data.tokens;
-
-        const addressMap = {};
-        for (const token of addressData) {
-            addressMap[token.name.toLowerCase()] = token.address.toLowerCase();
-        }
-        const logoMap = {};
-        for (const token of addressData) {
-            logoMap[token.name.toLowerCase()] = token.logoURI;
+        for (let i = 0; i < tokens.length; i += batchSize) {
+            addressBatches.push(tokens.slice(i, i + batchSize));
         }
 
-        for (const token of tokens) {
-            const address = addressMap[token.name.toLowerCase()];
-            if (address) {
-                await connection.execute('UPDATE tokens SET address = ? WHERE name = ?', [address, token.name]);
+        for (const batch of addressBatches) {
+            const coinsParam = batch.map(token => `${token.chain}:${token.address}`).join(',');
+            console.log(coinsParam);
+
+            const priceResponse = await axios.get(`https://coins.llama.fi/prices/current/${coinsParam}`);
+            const prices = priceResponse.data.coins;
+
+            const updatePromises = [];
+            for (const token of batch) {
+                const priceData = prices[`${token.chain}:${token.address}`];
+                if (priceData) {
+                    updatePromises.push(
+                        connection.execute('UPDATE TempTokens SET price = ? WHERE address = ?', [priceData.price ? priceData.price : null, token.address])
+                    );
+                    updatePromises.push(
+                        connection.execute('UPDATE TempTokens SET decimals = ? WHERE address = ?', [priceData.decimals ? priceData.decimals : 18, token.address])
+                    );
+                }
             }
-        }
-        for (const token of tokens) {
-            const logo = logoMap[token.name.toLowerCase()];
-            if (logo) {
-                await connection.execute('UPDATE tokens SET logo = ? WHERE name = ?', [logo, token.name]);
-            }
+
+            await Promise.all(updatePromises);
         }
 
-        await connection.execute('DELETE FROM tokens WHERE address IS NULL');
-
-        console.log('Tokens updated successfully with addresses!');
+        console.log('Token prices updated successfully!');
     } catch (error) {
-        console.error('Error fetching or updating tokens:', error);
+        console.error('Error updating token prices:', error);
     } finally {
-        connection.release(); // Ensure the connection is closed
+        connection.release();
     }
 }
 
-fetchAndStoreTokens();
+fetchPrices();

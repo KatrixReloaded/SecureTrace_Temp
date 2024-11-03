@@ -14,7 +14,7 @@ const algosdk = require('algosdk');
 ------------------------------------------------------------------------------ */
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = process.env.PORT || 3002;
 
 /** @dev config for Token Database */
 const pool = mysql.createPool({
@@ -95,26 +95,26 @@ let tokenNameToId;
  * @param id -> the token ID for which the price is being added
  * @param tokenPrice -> the price of the token
  */
-async function addOrUpdateTokenPrice(id, tokenPrice) {
-    try {
-        const connection = await pool.getConnection();
+// async function addOrUpdateTokenPrice(id, tokenPrice) {
+//     try {
+//         const connection = await pool.getConnection();
 
-        const sql = `
-            INSERT INTO tokenPrices (id, tokenPrice)
-            VALUES (?, ?)
-            ON DUPLICATE KEY UPDATE
-                tokenPrice = IF(TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5, VALUES(tokenPrice), tokenPrice),
-                createdAt = IF(TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5, CURRENT_TIMESTAMP, createdAt)
-        `;
+//         const sql = `
+//             INSERT INTO tokenPrices (id, tokenPrice)
+//             VALUES (?, ?)
+//             ON DUPLICATE KEY UPDATE
+//                 tokenPrice = IF(TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5, VALUES(tokenPrice), tokenPrice),
+//                 createdAt = IF(TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) >= 5, CURRENT_TIMESTAMP, createdAt)
+//         `;
 
-        await connection.execute(sql, [id, tokenPrice]);
+//         await connection.execute(sql, [id, tokenPrice]);
 
-        connection.release();
-    } catch (error) {
-        console.error('Error inserting or updating token price:', error);
-        throw error;
-    }
-}
+//         connection.release();
+//     } catch (error) {
+//         console.error('Error inserting or updating token price:', error);
+//         throw error;
+//     }
+// }
 
 
 /** ----------------------------------------------------------------------------- 
@@ -124,7 +124,7 @@ async function addOrUpdateTokenPrice(id, tokenPrice) {
  /** @dev just in case we need to set a timeout 
   * @param target function to set a timeout for it
  */
- async function fetchWithTimeout(fetchFunction, timeout = 120000) {
+ async function fetchWithTimeout(fetchFunction, timeout = 5000) {
      const abortController = new AbortController();
      const id = setTimeout(() => abortController.abort(), timeout);
      try {
@@ -141,8 +141,8 @@ async function fetchTokenList() {
     const connection = await pool.getConnection();
     try {
         if(!validTokenAddresses){
-            const [rows] = await connection.execute('SELECT address FROM tokens');
-            return new Set(rows.map(token => token.address.toLowerCase()));
+            const [rows] = await connection.execute('SELECT address FROM TempTokens');
+            return new Set(rows.map(token => token.address));
         } else {
             return validTokenAddresses;
         }
@@ -150,7 +150,7 @@ async function fetchTokenList() {
         console.error('Error fetching token list from database:', error);
         return new Set(); 
     } finally {
-        connection.release(); // Ensure the connection is closed
+        connection.release();
     }
 }
 
@@ -158,80 +158,68 @@ async function fetchTokenList() {
  * @dev returns token prices for tokens whose prices have been updated less than 5 minutes ago
  * @param tokenIds -> set of IDs of tokens for which the USD value is fetched
  */
-async function getUpToDateTokenPrices(tokenIds) {
-    const connection = await pool.getConnection();
+// async function getUpToDateTokenPrices(addresses) {
+//     const connection = await pool.getConnection();
+//     try {
+//         if (tokenIds.length === 0) {
+//             return {};
+//         }
+//         const placeholders = addresses.map(() => '?').join(',');
+//         const query = `SELECT address, price FROM DLTokens WHERE address IN (${placeholders})`;
 
-    try {
-        if (tokenIds.length === 0) {
-            return {};
-        }
-        const placeholders = tokenIds.map(() => '?').join(',');
-        const query = `SELECT id, tokenPrice FROM tokenPrices WHERE id IN (${placeholders}) AND TIMESTAMPDIFF(MINUTE, createdAt, CURRENT_TIMESTAMP) < 5`;
+//         const [rows] = await connection.execute(query, addresses);
 
-        const [rows] = await connection.execute(query, tokenIds);
+//         const tokenPrices = {};
+//         for (const row of rows) {
+//             tokenPrices[row.address] = { usd: row.tokenPrice };
+//         }
 
-        const tokenPrices = {};
-        for (const row of rows) {
-            tokenPrices[row.id] = { usd: row.tokenPrice };
-        }
-
-        return tokenPrices;
-    } catch (error) {
-        console.error('Error fetching up-to-date token prices:', error);
-        return {};
-    } finally {
-        connection.release();
-    }
-}
+//         return tokenPrices;
+//     } catch (error) {
+//         console.error('Error fetching up-to-date token prices:', error);
+//         return {};
+//     } finally {
+//         connection.release();
+//     }
+// }
 
 /** @notice Fetches current token price for a set of tokens
  * @dev fetches the current price based on tokenIds set
  * @param tokenIds -> set of IDs of tokens for which the USD value is fetched
  */
-async function fetchTokenPrices(tokenIds) {
-    const uniqueTokenIds = [...new Set(tokenIds)];
+async function fetchTokenPrices(addresses) {
+    const uniqueAddresses = [...new Set(addresses)];
 
-    const upToDatePrices = await getUpToDateTokenPrices(uniqueTokenIds);
-    const upToDatePriceIds = upToDatePrices ? new Set(Object.keys(upToDatePrices)) : new Set();
-
-    const idsToFetch = uniqueTokenIds.filter(id => !upToDatePriceIds.has(id));;
-
-    let newPrices = {};
-    if (idsToFetch.length > 0) {
-        const ids = idsToFetch.join(',');
-
+    const connection = await pool.getConnection();
+    const prices = async (ads) => { 
         try {
-            const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+            if (ads.length === 0) {
+                return {};
+            }
+            const placeholders = ads.map(() => '?').join(',');
+            const query = `SELECT chain, address, price FROM TempTokens WHERE address IN (${placeholders})`;
 
-            if (response.status === 429) {
-                console.error('Rate limit exceeded. Please wait before making more requests.');
-                await new Promise(resolve => setTimeout(resolve, 10000));
-                return fetchTokenPrices(tokenIds);
+            const [rows] = await connection.execute(query, ads);
+
+            const tokenPrices = {};
+            for (const row of rows) {
+                tokenPrices[row.address] = { usd: row.price };
             }
 
-            if (!response.ok) {
-                throw new Error(`Error fetching prices: ${response.statusText}`);
-            }
-
-            newPrices = await response.json();
-
-            for (const [tokenId, priceData] of Object.entries(newPrices)) {
-                const price = parseFloat(priceData.usd).toFixed(8);
-                await addOrUpdateTokenPrice(tokenId, price);
-            }
-
+            return tokenPrices;
         } catch (error) {
-            console.error('Error fetching token prices:', error);
+            console.error('Error fetching up-to-date token prices:', error);
             return {};
+        } finally {
+            connection.release();
         }
-    }
+    };
 
-    const allPrices = { ...upToDatePrices, ...newPrices };
+    const upToDatePrices = await prices(uniqueAddresses);
+    const allPrices = { ...upToDatePrices };
 
     return allPrices;
 }
-
-
 
 /** @notice function to fetch a token's ID
  * @dev accesses the tokenDB to return id values for respective token names
@@ -240,10 +228,14 @@ async function fetchTokenData() {
     const connection = await pool.getConnection();
     try {
         if(!tokenNameToId) {
-            const [rows] = await connection.execute('SELECT name, id FROM tokens');
+            const [rows] = await connection.execute('SELECT chain, address, name, symbol, decimals, logoURL FROM TempTokens');
             return rows.map(token => ({
-                name: token.name.toLowerCase(),
-                id: token.id
+                chain: token.chain,
+                address: token.address,
+                name: token.name ? token.name : null,
+                symbol: token.symbol,
+                decimals: token.decimals ? token.decimals : 18,
+                logo: token.logoURL ? token.logoURL : null,
             }));
         } else {
             return tokenNameToId;
@@ -280,6 +272,11 @@ async function fetchCoinGeckoCoins() {
 ------------------------------------------------------------------------------ */
 
 /// @note Add native tokens as well
+/**
+ * @note Use address to fetch tokenBalances, then each token's metadata, while fetching metadata, 
+ * @note call DefiLlama API to get the token's price, match the symbol with coingecko coins list and if missing, skip.
+ * @note No need for token IDs here then, just use token address
+ */
 /** @notice fetches the address's ERC-20 token assets
  * @dev uses alchemy-sdk's `getTokenBalances` function to get a particular address's token assets
  * @param settings -> alchemy settiings for different chains
@@ -288,56 +285,33 @@ async function fetchCoinGeckoCoins() {
 async function fetchAddressDetails(settings, address) {
     const alchemy = new Alchemy(settings);
 
-    const [validTokenAddresses, tokenNameToId, balances] = await Promise.all([
+    const [validTokenAddresses, metadata, balances] = await Promise.all([
         fetchTokenList(),
         fetchTokenData(),
         alchemy.core.getTokenBalances(address),
     ]);
 
-    const tokenMetadataCache = new Map();
-    const tokenIds = new Set();
+    const addresses = new Set();
 
     const tokenDetails = balances.tokenBalances.map(async (token) => {
-        const contractAddress = token.contractAddress.toLowerCase();
-        console.log(`Processing token address on ${settings.network}: ${contractAddress}`);
+        const contractAddress = token.contractAddress;
 
         if (!validTokenAddresses.has(contractAddress)) return null;
 
-        if (!tokenMetadataCache.has(contractAddress)) {
-            for (let i = 0; i < 3; i++) {
-                try {
-                    const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-                    if (metadata && metadata.name && metadata.symbol) {
-                        tokenMetadataCache.set(contractAddress, metadata);
-                        break;
-                    }
-                } catch (error) {
-                    if (error.code === 'SERVER_ERROR' && i < 2) {
-                        await new Promise(res => setTimeout(res, 1000));
-                    } else {
-                        console.error(`Skipping token ${contractAddress} due to server error:`, error);
-                        return null;
-                    }
-                }
-            }
-        }
+        const tokenMetadata = metadata.find(m => m.address === contractAddress);
+        if (!tokenMetadata) return null;
 
-        const metadata = tokenMetadataCache.get(contractAddress);
-        if (!metadata) return null;
-
-        const tokenIdEntry = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
-        if (!tokenIdEntry) return null;
-
-        let decimals = metadata.decimals ? metadata.decimals : 18;
-        const readableBalance = ethers.formatUnits(token.tokenBalance, decimals);
+        const readableBalance = ethers.formatUnits(token.tokenBalance, tokenMetadata.decimals);
         if (parseFloat(readableBalance) > 0) {
-            tokenIds.add(tokenIdEntry.id);
+            addresses.add(contractAddress);
             return {
+                chain: tokenMetadata.chain,
                 tokenBalance: readableBalance,
-                tokenName: metadata.name,
-                tokenSymbol: metadata.symbol,
-                tokenId: tokenIdEntry.id,
+                tokenName: tokenMetadata.name,
+                tokenSymbol: tokenMetadata.symbol,
+                tokenAddress: contractAddress,
                 tokenPrice: 0,
+                logo: tokenMetadata.logo,
             };
         }
         return null;
@@ -345,9 +319,9 @@ async function fetchAddressDetails(settings, address) {
 
     const resolvedTokenDetails = (await Promise.all(tokenDetails)).filter(detail => detail);
 
-    const tokenPrices = await fetchTokenPrices(Array.from(tokenIds));
+    const tokenPrices = await fetchTokenPrices(Array.from(addresses));
     resolvedTokenDetails.forEach(token => {
-        token.tokenPrice = tokenPrices[token.tokenId]?.usd || 0;
+        token.tokenPrice = tokenPrices[token.tokenAddress]?.usd || 0;
     });
 
     return resolvedTokenDetails;
@@ -358,20 +332,31 @@ async function fetchAddressDetails(settings, address) {
 app.get('/fetch-address-details/:address', async (req, res) => {
     const address = req.params.address;
     const chains = {
-        eth: settingsEthereum,
-        arb: settingsArbitrum,
-        opt: settingsOptimism,
-        pol: settingsPolygon,
-        zk: settingsZksync,
+        ethereum: settingsEthereum,
+        arbitrum: settingsArbitrum,
+        optimism: settingsOptimism,
+        polygon: settingsPolygon,
+        // zk: settingsZksync,
         // avax: settingsAvalanche,
         blast: settingsBlast,
-    }
+    };
 
     if (!address) {
         return res.status(400).json({ error: 'Address is required' });
     }
+    
     try {
-        const tokens = await Promise.all(Object.values(chains).map(chain => fetchAddressDetails({apiKey: chain.apiKey, network: chain.network}, address)));
+        // Fetch data in parallel for each chain
+        const results = await Promise.all(
+            Object.entries(chains).map(([chainKey, chainSettings]) =>
+                fetchAddressDetails({ apiKey: chainSettings.apiKey, network: chainSettings.network }, address)
+                    .then(tokens => tokens.map(token => ({ ...token, chain: chainKey })))
+            )
+        );
+
+        // Flatten the results array and merge data from all chains
+        const tokens = results.flat();
+
         res.json({ tokens });
     } catch (error) {
         console.error('Error fetching address details:', error);
@@ -394,7 +379,7 @@ app.get('/fetch-address-details/:address', async (req, res) => {
 async function tokenTransfers(settings, address) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
-    tokenNameToId = await fetchTokenData();
+    const metadata = await fetchTokenData();
 
     const fetchTransfers = async (direction) => {
         let transfers = {};
@@ -421,7 +406,6 @@ async function tokenTransfers(settings, address) {
             });
         }
 
-        const tokenMetadataCache = new Map();
         let filteredTxs = transfers.transfers.filter(tx => {
             if (tx.category === 'erc20') {
                 const isValidToken = validTokenAddresses.has(tx.rawContract.address.toLowerCase());
@@ -435,45 +419,28 @@ async function tokenTransfers(settings, address) {
         console.log("Filtered Txs");
         filteredTxs = await Promise.all(filteredTxs.map(async (tx) => {
             let contractAddress = tx.rawContract?.address;
-            if(!contractAddress && tx.category === 'external') {
-                return {
-                    txHash: tx.hash,
-                    from: tx.from,
-                    to: tx.to,
-                    value: tx.value,
-                    decimals: tx.rawContract ? tx.rawContract.decimals : 18,
-                    asset: tx.asset,
-                    assetType: 'external',
-                    tokenAddress: null,
-                    timestamp: tx.metadata.blockTimestamp,
-                    tokenPrice: null,
-                    tokenName: tx.asset === 'MATIC' ? "Polygon" : "Ethereum",
-                    tokenId: tx.asset === 'MATIC' ? "matic-network" : "ethereum",
-                };
-            } else if (!contractAddress) {
+            // if(!contractAddress && tx.category === 'external') {
+            //     return {
+            //         txHash: tx.hash,
+            //         from: tx.from,
+            //         to: tx.to,
+            //         value: tx.value,
+            //         decimals: tx.rawContract ? tx.rawContract.decimals : 18,
+            //         asset: tx.asset,
+            //         tokenAddress: null,
+            //         timestamp: tx.metadata.blockTimestamp,
+            //         tokenPrice: null,
+            //         tokenName: tx.asset === 'MATIC' ? "Polygon" : "Ethereum",
+            //     };
+            // } else 
+            if (!contractAddress) {
                 return null;
             }
 
             contractAddress = contractAddress.toLowerCase();
-            if (!tokenMetadataCache.has(contractAddress) && tx.category === 'erc20') {
-                try {
-                    const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-                    tokenMetadataCache.set(contractAddress, metadata);
-                } catch (error) {
-                    if (error.code === 'SERVER_ERROR') {
-                        console.error(`Skipping token ${contractAddress} due to server error:`, error);
-                        return null;
-                    }
-                    throw error;
-                }
-            }
 
-            const metadata = tokenMetadataCache.get(contractAddress);
-            if (!metadata || metadata.decimals === 0 || !metadata.name || !metadata.symbol) {
-                return null;
-            }
-            const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === metadata.name.toLowerCase());
-            if(!tokenId) {
+            const tokenMetadata = metadata.find(m => m.address === contractAddress);
+            if (!tokenMetadata) {
                 return null;
             }
 
@@ -482,25 +449,25 @@ async function tokenTransfers(settings, address) {
                 from: tx.from,
                 to: tx.to,
                 value: tx.value,
-                decimals: tx.rawContract ? tx.rawContract.decimals : 18,
-                asset: tx.asset,
-                assetType: tx.category === 'erc20' ? 'erc20' : 'external',
-                tokenAddress: tx.rawContract ? tx.rawContract.address : null,
+                decimals: tokenMetadata.decimals ? tokenMetadata.decimals : 18,
+                symbol: tokenMetadata.symbol,
+                tokenAddress: contractAddress,
                 timestamp: tx.metadata.blockTimestamp,
                 tokenPrice: null,
-                tokenName: metadata.name,
-                tokenId: tokenId.id,
+                tokenName: tokenMetadata.name,
+                chain: tokenMetadata.chain,
+                logo: tokenMetadata.logo,
             };
         }));
 
         filteredTxs = filteredTxs.filter(tx => tx !== null);
 
-        const tokenIds = filteredTxs.map(tx => tx.tokenId);
+        const addresses = filteredTxs.map(tx => tx.tokenAddress);
 
-        const tokenPrices = await fetchTokenPrices(tokenIds);
+        const tokenPrices = await fetchTokenPrices(addresses);
         filteredTxs.forEach(tx => {
-            const tokenId = tx.tokenId;
-            tx.tokenPrice = tokenPrices[tokenId] ? tokenPrices[tokenId].usd : 0;
+            const address = tx.tokenAddress;
+            tx.tokenPrice = tokenPrices[address] ? tokenPrices[address].usd : 0;
             console.log(tx.tokenName, tx.value, tx.tokenPrice, "USD");
         });
 
@@ -541,7 +508,7 @@ app.get('/token-transfers/:address', async (req, res) => {
         arb: settingsArbitrum,
         opt: settingsOptimism,
         pol: settingsPolygon,
-        zk: settingsZksync,
+        // zk: settingsZksync,
     }
     const allFromTransfers = [];
     const allToTransfers = [];
@@ -566,6 +533,7 @@ app.get('/token-transfers/:address', async (req, res) => {
 ------------------------------ TRANSACTION TTV ----------------------------------
 ------------------------------------------------------------------------------ */
 
+// @note Use alchemy__getTokenMetadata instead of using ethers.Contract (?)
 /** @notice fetches all internal transfer of tokens in a single transaction
  * @dev fetches tx receipt for a particular tx hash and filters them for ERC-20 transfers
  * @param txHash -> the tx hash for which we are fetching the internal transfers
@@ -749,7 +717,7 @@ async function recentTxs(settings) {
         const alchemy = new Alchemy(settings);
         let currentBlock = await alchemy.core.getBlockNumber();
         const validTokenAddresses = await fetchTokenList();
-        const tokenNameToId = await fetchTokenData();
+        const metadata = await fetchTokenData();
 
         let txs = {};
         let filteredTxs;
@@ -760,7 +728,7 @@ async function recentTxs(settings) {
             txs = await alchemy.core.getAssetTransfers({
                 fromBlock: blockNumber,
                 toBlock: blockNumber,
-                category: ['erc20', 'external'],
+                category: ['erc20'],
                 withMetadata: true,
                 excludeZeroValue: true,
                 maxCount: 30,
@@ -769,8 +737,6 @@ async function recentTxs(settings) {
             filteredTxs = txs.transfers.filter(tx => {
                 if (tx.category === 'erc20') {
                     return validTokenAddresses.has(tx.rawContract.address.toLowerCase());
-                } else if (tx.category === 'external') {
-                    return true;
                 }
                 return false;
             });
@@ -780,38 +746,26 @@ async function recentTxs(settings) {
             }
         }
         
-        const tokenMetadataCache = new Map();
-        let tokenIds = [];
+        const addresses = new Set();
         for (const tx of filteredTxs) {
             
             if (tx.category === 'erc20') {
                 const contractAddress = tx.rawContract.address.toLowerCase();
 
-                if (!tokenMetadataCache.has(contractAddress)) {
-                    const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-                    tokenMetadataCache.set(contractAddress, metadata);
-                }
+                const tokenMetadata = metadata.find(m => m.address === contractAddress);
+                if (!tokenMetadata) return null;
 
-                const metadata = tokenMetadataCache.get(contractAddress);
-                const tokenName = metadata?.name?.toLowerCase();
-                if (tokenName) {
-                    const tokenId = tokenNameToId.find(t => t.name === tokenName);
-                    if (tokenId) {
-                        tx.tokenId = tokenId.id;
-                        tokenIds.push(tokenId.id);
-                    }
-                }
-            } else if (tx.category === 'external') {
-                tx.tokenId = tx.asset === "MATIC" ? "matic-network" : "ethereum";
-                tokenIds.push(tx.tokenId);
+                tx.logo = tokenMetadata.logo;
+                addresses.add(contractAddress);
             }
         }
 
-        const tokenPrices = await fetchTokenPrices(tokenIds);
+        const tokenPrices = await fetchTokenPrices(addresses);
 
         for (const tx of filteredTxs) {
-            if (tx.tokenId && tokenPrices[tx.tokenId]) {
-                tx.tokenPrice = tokenPrices[tx.tokenId].usd || 0;
+            const contractAddress = tx.rawContract.address.toLowerCase();
+            if (contractAddress && tokenPrices[contractAddress]) {
+                tx.tokenPrice = tokenPrices[contractAddress].usd || 0;
             }
         }
 
@@ -837,10 +791,10 @@ async function recentTxs(settings) {
 app.get('/recent-txs', async (req, res) => {
     try {
         const chains = {
-            eth: settingsEthereum,
-            arb: settingsArbitrum,
-            opt: settingsOptimism,
-            zk: settingsZksync,
+            ethereum: settingsEthereum,
+            arbitrum: settingsArbitrum,
+            optimism: settingsOptimism,
+            polygon: settingsPolygon,
         };
         const allTransfers = await Promise.all(Object.values(chains).map(chain => recentTxs({apiKey: chain.apiKey, network: chain.network})));
         console.log(allTransfers);
@@ -867,8 +821,8 @@ const cache = {
  */
 app.get('/top-tokens', async (req, res) => {
     try {
-        const tokenNameToId = await fetchTokenData();
-        const evmTokenIds = new Set(tokenNameToId.map(token => token.id));
+        const metadata = await fetchTokenData();
+        const evmTokenIds = new Set(metadata.map(token => token.address));
 
         // Check cache (cache for 5 minutes)
         if (cache.data && Date.now() - cache.lastFetched < 5 * 60 * 1000) {
@@ -890,7 +844,7 @@ app.get('/top-tokens', async (req, res) => {
 
         // Update cache if data changed
         if (response.status === 200) {
-            cache.data = response.data.filter(token => evmTokenIds.has(token.id));
+            cache.data = response.data;
             cache.lastFetched = Date.now();
             cache.etag = response.headers.etag;
             res.json(cache.data);

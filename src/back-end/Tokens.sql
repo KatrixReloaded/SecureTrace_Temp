@@ -2,15 +2,4 @@ CREATE DATABASE tokenDB;
 
 USE tokenDB;
 
-CREATE TABLE tokens (
-    id VARCHAR(255) PRIMARY KEY,
-    symbol VARCHAR(255) CHARACTER SET utf8mb4,
-    name VARCHAR(255) CHARACTER SET utf8mb4,
-    address VARCHAR(255)
-);
-
-CREATE TABLE tokenPrices (
-    id VARCHAR(255) PRIMARY KEY,
-    tokenPrice DECIMAL(10, 10),
-    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+CREATE TABLE TempTokens (address VARCHAR(255) PRIMARY KEY, name VARCHAR(255), symbol VARCHAR(255), decimals INT, chain VARCHAR(40), price DECIMALS(30,10), logoURL VARCHAR(1024));

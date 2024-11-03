@@ -10,6 +10,7 @@
     "alchemy-sdk": "^3.4.1",
     "algosdk": "^3.0.0",
     "axios": "^1.7.0-beta.2",
+    "cheerio": "^1.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "ethers": "^6.13.2",
