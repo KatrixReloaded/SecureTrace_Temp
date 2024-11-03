@@ -228,13 +228,14 @@ async function fetchTokenData() {
     const connection = await pool.getConnection();
     try {
         if(!tokenNameToId) {
-            const [rows] = await connection.execute('SELECT chain, address, name, symbol, decimals FROM TempTokens');
+            const [rows] = await connection.execute('SELECT chain, address, name, symbol, decimals, logoURL FROM TempTokens');
             return rows.map(token => ({
                 chain: token.chain,
                 address: token.address,
                 name: token.name ? token.name : null,
                 symbol: token.symbol,
                 decimals: token.decimals ? token.decimals : 18,
+                logo: token.logoURL ? token.logoURL : null,
             }));
         } else {
             return tokenNameToId;
@@ -310,6 +311,7 @@ async function fetchAddressDetails(settings, address) {
                 tokenSymbol: tokenMetadata.symbol,
                 tokenAddress: contractAddress,
                 tokenPrice: 0,
+                logo: tokenMetadata.logo,
             };
         }
         return null;
@@ -417,20 +419,21 @@ async function tokenTransfers(settings, address) {
         console.log("Filtered Txs");
         filteredTxs = await Promise.all(filteredTxs.map(async (tx) => {
             let contractAddress = tx.rawContract?.address;
-            if(!contractAddress && tx.category === 'external') {
-                return {
-                    txHash: tx.hash,
-                    from: tx.from,
-                    to: tx.to,
-                    value: tx.value,
-                    decimals: tx.rawContract ? tx.rawContract.decimals : 18,
-                    asset: tx.asset,
-                    tokenAddress: null,
-                    timestamp: tx.metadata.blockTimestamp,
-                    tokenPrice: null,
-                    tokenName: tx.asset === 'MATIC' ? "Polygon" : "Ethereum",
-                };
-            } else if (!contractAddress) {
+            // if(!contractAddress && tx.category === 'external') {
+            //     return {
+            //         txHash: tx.hash,
+            //         from: tx.from,
+            //         to: tx.to,
+            //         value: tx.value,
+            //         decimals: tx.rawContract ? tx.rawContract.decimals : 18,
+            //         asset: tx.asset,
+            //         tokenAddress: null,
+            //         timestamp: tx.metadata.blockTimestamp,
+            //         tokenPrice: null,
+            //         tokenName: tx.asset === 'MATIC' ? "Polygon" : "Ethereum",
+            //     };
+            // } else 
+            if (!contractAddress) {
                 return null;
             }
 
@@ -452,7 +455,8 @@ async function tokenTransfers(settings, address) {
                 timestamp: tx.metadata.blockTimestamp,
                 tokenPrice: null,
                 tokenName: tokenMetadata.name,
-                chain: tokenMetadata.chain
+                chain: tokenMetadata.chain,
+                logo: tokenMetadata.logo,
             };
         }));
 
@@ -742,33 +746,17 @@ async function recentTxs(settings) {
             }
         }
         
-        // const tokenMetadataCache = new Map();
-        // let tokenIds = [];
         const addresses = new Set();
         for (const tx of filteredTxs) {
             
             if (tx.category === 'erc20') {
                 const contractAddress = tx.rawContract.address.toLowerCase();
 
-                // if (!tokenMetadataCache.has(contractAddress)) {
-                //     const metadata = await alchemy.core.getTokenMetadata(contractAddress);
-                //     tokenMetadataCache.set(contractAddress, metadata);
-                // }
-
                 const tokenMetadata = metadata.find(m => m.address === contractAddress);
                 if (!tokenMetadata) return null;
 
+                tx.logo = tokenMetadata.logo;
                 addresses.add(contractAddress);
-                // if (tokenName) {
-                    // const tokenId = tokenNameToId.find(t => t.name === tokenName);
-                    // if (tokenId) {
-                    //     tx.tokenId = tokenId.id;
-                    //     tokenIds.push(tokenId.id);
-                    // }
-                // }
-            // } else if (tx.category === 'external') {
-            //     tx.tokenId = tx.asset === "MATIC" ? "matic-network" : "ethereum";
-            //     tokenIds.push(tx.tokenId);
             }
         }
 
@@ -803,10 +791,10 @@ async function recentTxs(settings) {
 app.get('/recent-txs', async (req, res) => {
     try {
         const chains = {
-            eth: settingsEthereum,
-            arb: settingsArbitrum,
-            opt: settingsOptimism,
-            pol: settingsPolygon,
+            ethereum: settingsEthereum,
+            arbitrum: settingsArbitrum,
+            optimism: settingsOptimism,
+            polygon: settingsPolygon,
         };
         const allTransfers = await Promise.all(Object.values(chains).map(chain => recentTxs({apiKey: chain.apiKey, network: chain.network})));
         console.log(allTransfers);
@@ -833,11 +821,11 @@ const cache = {
  */
 app.get('/top-tokens', async (req, res) => {
     try {
-        const tokenNameToId = await fetchTokenData();
-        const evmTokenIds = new Set(tokenNameToId.map(token => token.id));
+        const metadata = await fetchTokenData();
+        const evmTokenIds = new Set(metadata.map(token => token.address));
 
         // Check cache (cache for 5 minutes)
-        if (cache.data && Date.now() - cache.lastFetched < 1 * 60 * 1000) {
+        if (cache.data && Date.now() - cache.lastFetched < 5 * 60 * 1000) {
             return res.json(cache.data);
         }
 
@@ -856,7 +844,7 @@ app.get('/top-tokens', async (req, res) => {
 
         // Update cache if data changed
         if (response.status === 200) {
-            cache.data = response.data.filter(token => (evmTokenIds.has(token.id) || token.id === 'ethereum'));
+            cache.data = response.data;
             cache.lastFetched = Date.now();
             cache.etag = response.headers.etag;
             res.json(cache.data);

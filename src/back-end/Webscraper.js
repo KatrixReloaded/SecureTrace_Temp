@@ -43,7 +43,7 @@ async function scrapeExplorerTokens(url) {
                         : link === 'lineascan.build' ? "linea" 
                             : link === 'polygonscan.com' ? "polygon" 
                                 : link === 'blastscan.io' ? "blast" 
-                                    : link === 'explorer.zksync.io' ? "zksync" : null;
+                                    : link === 'optimistic.etherscan.io' ? "optimism" : null;
 
                 console.log({ name, symbol, address, logo, chain, link });
                 tokens.push({ name, symbol, address, logo, chain });
@@ -67,7 +67,7 @@ async function scrapeFromMultipleExplorers(urls) {
     const allTokens = results.flat();
 
     const connection = await pool.getConnection();
-    await connection.execute('DELETE FROM TempTokens');
+    // await connection.execute('DELETE FROM TempTokens');
 
     try {
         await connection.beginTransaction();
