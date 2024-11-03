@@ -708,11 +708,24 @@ app.get('/fetch-transaction-details/:txhash', async (req, res) => {
  * ----------------------------- RECENT TXS TABLE -------------------------------
  * --------------------------------------------------------------------------- */
 
+const cache_txs = {
+    recentTxs: null,
+    lastUpdated: 0,
+};
+
 /** @notice fetches all txs from the latest block of a chain
  * @dev called for every chain, stores tx details of all ERC-20 and native token transfer txs
  * @param settings -> settings for the chain for which the recent txs are being fetched
  */
 async function recentTxs(settings) {
+    const cacheDuration = 5 * 60 * 1000;
+    const now = Date.now();
+
+    if (cache_txs.recentTxs && (now - cache_txs.lastUpdated < cacheDuration)) {
+        console.log("Returning cached transactions");
+        return cache_txs.recentTxs;
+    }
+
     try {
         const alchemy = new Alchemy(settings);
         let currentBlock = await alchemy.core.getBlockNumber();
@@ -778,6 +791,10 @@ async function recentTxs(settings) {
         });
 
         console.log("Txs fetched", settings.network);
+
+        cache_txs.recentTxs = filteredTxs;
+        cache_txs.lastUpdated = now;
+
         return filteredTxs;
     } catch (error) {
         console.error('Error fetching recent transactions:', error);
@@ -797,8 +814,9 @@ app.get('/recent-txs', async (req, res) => {
             polygon: settingsPolygon,
         };
         const allTransfers = await Promise.all(Object.values(chains).map(chain => recentTxs({apiKey: chain.apiKey, network: chain.network})));
-        console.log(allTransfers);
-        res.json({txs: allTransfers});
+        const mergedTransfers = allTransfers.flat();
+        console.log(mergedTransfers);
+        res.json({txs: mergedTransfers});
     } catch(error) {
         res.status(500).json({ error: 'An error occurred while fetching recent transactions' });
     }
@@ -810,7 +828,7 @@ app.get('/recent-txs', async (req, res) => {
  * --------------------------- TRENDING TOKENS PAGE -----------------------------
  * --------------------------------------------------------------------------- */
 
-const cache = {
+const cache_tokens = {
     data: null,
     lastFetched: 0,
     etag: null
@@ -824,12 +842,10 @@ app.get('/top-tokens', async (req, res) => {
         const metadata = await fetchTokenData();
         const evmTokenIds = new Set(metadata.map(token => token.address));
 
-        // Check cache (cache for 5 minutes)
-        if (cache.data && Date.now() - cache.lastFetched < 5 * 60 * 1000) {
-            return res.json(cache.data);
+        if (cache_tokens.data && Date.now() - cache_tokens.lastFetched < 5 * 60 * 1000) {
+            return res.json(cache_tokens.data);
         }
 
-        // Fetch from CoinGecko with ETag for conditional requests
         const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets', {
             params: {
                 vs_currency: 'usd',
@@ -838,26 +854,23 @@ app.get('/top-tokens', async (req, res) => {
                 page: 1
             },
             headers: {
-                'If-None-Match': cache.etag || ''
+                'If-None-Match': cache_tokens.etag || ''
             }
         });
 
-        // Update cache if data changed
         if (response.status === 200) {
-            cache.data = response.data;
-            cache.lastFetched = Date.now();
-            cache.etag = response.headers.etag;
-            res.json(cache.data);
+            cache_tokens.data = response.data;
+            cache_tokens.lastFetched = Date.now();
+            cache_tokens.etag = response.headers.etag;
+            res.json(cache_tokens.data);
         } else if (response.status === 304) {
-            // Serve cached data if not modified
-            res.json(cache.data);
+            res.json(cache_tokens.data);
         }
     } catch (error) {
         console.error("Failed to fetch top EVM tokens:", error);
 
-        if (cache.data) {
-            // Serve cached data if CoinGecko fails
-            res.json(cache.data);
+        if (cache_tokens.data) {
+            res.json(cache_tokens.data);
         } else {
             res.status(500).json({ error: 'Unable to retrieve top EVM token data.' });
         }
