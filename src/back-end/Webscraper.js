@@ -109,6 +109,7 @@ async function scrapeFromMultipleExplorers(urls) {
         'https://etherscan.io/tokens?ps=100&p=15',
         'https://etherscan.io/tokens?ps=100&p=16',
         'https://etherscan.io/tokens?ps=100&p=17',
+        'https://etherscan.io/tokens?ps=100&p=18',
         'https://lineascan.build/tokens?ps=100',
         'https://blastscan.io/tokens?ps=100',
         'https://polygonscan.com/tokens?ps=100',
