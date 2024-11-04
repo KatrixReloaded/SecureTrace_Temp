@@ -329,8 +329,8 @@ async function fetchAddressDetails(settings, address) {
 
 /** @dev address value is passed here and tokens across multiple chains are checked */
 /** @param req -> req.body == the address passed*/
-app.post('/fetch-address-details/:address', async (req, res) => {
-    const address = req.params.address;
+app.post('/fetch-address-details', async (req, res) => {
+    const address = req.body.address;
     const chains = {
         ethereum: settingsEthereum,
         arbitrum: settingsArbitrum,
@@ -499,10 +499,10 @@ async function tokenTransfers(settings, address) {
 
 /** @notice address value is passed here to fetch all to and from transfer of tokens from that address
  * @dev calls the tokenTransfers function for fetching transfers from multiple chains
- * @param req -> req.params.address == the address passed
+ * @param req -> req.body.address == the address passed
  */
-app.post('/token-transfers/:address', async (req, res) => {
-    const address = req.params.address;
+app.post('/token-transfers', async (req, res) => {
+    const address = req.body.address;
     const chains = {
         eth: settingsEthereum,
         arb: settingsArbitrum,
@@ -645,10 +645,10 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
 
 /** @notice calls the fetchTokenTransfersFromTx function from different chains
  * @dev will only run for one chain to which the tx hash belongs to, written conditional statements so that it checks for which chain the tx belongs to
- * @param req.params.txhash -> the tx hash for which the transfers need to be fetched
+ * @param req.body.txhash -> the tx hash for which the transfers need to be fetched
  */
-app.post('/fetch-transaction-details/:txhash', async (req, res) => {
-    const txhash = req.params.txhash;
+app.post('/fetch-transaction-details', async (req, res) => {
+    const txhash = req.body.txhash;
 
     try {
         console.log("Fetching internal transfers for Ethereum");
@@ -982,10 +982,10 @@ async function fetchAlgorandAddressDetails(address) {
 
 /**
  * @dev calls the fetchAlgorandAddressDetails function for a particular address
- * @param req -> req.params.address == the address passed
+ * @param req -> req.body.address == the address passed
  */
 app.post('/fetch-algorand-details/:address', async (req, res) => {
-    const address = req.params.address;
+    const address = req.body.address;
 
     if (!address) {
         return res.status(400).json({ error: 'Address is required' });
