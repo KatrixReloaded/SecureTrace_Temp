@@ -78,7 +78,7 @@ app.use(cors({
 
 app.use(express.json());
 
-app.get('/', (req, res) => {
+app.post('/', (req, res) => {
     res.send('Hello, SecureTrace is live!');
 });
 
@@ -329,7 +329,7 @@ async function fetchAddressDetails(settings, address) {
 
 /** @dev address value is passed here and tokens across multiple chains are checked */
 /** @param req -> req.body == the address passed*/
-app.get('/fetch-address-details/:address', async (req, res) => {
+app.post('/fetch-address-details/:address', async (req, res) => {
     const address = req.params.address;
     const chains = {
         ethereum: settingsEthereum,
@@ -501,7 +501,7 @@ async function tokenTransfers(settings, address) {
  * @dev calls the tokenTransfers function for fetching transfers from multiple chains
  * @param req -> req.params.address == the address passed
  */
-app.get('/token-transfers/:address', async (req, res) => {
+app.post('/token-transfers/:address', async (req, res) => {
     const address = req.params.address;
     const chains = {
         eth: settingsEthereum,
@@ -647,7 +647,7 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
  * @dev will only run for one chain to which the tx hash belongs to, written conditional statements so that it checks for which chain the tx belongs to
  * @param req.params.txhash -> the tx hash for which the transfers need to be fetched
  */
-app.get('/fetch-transaction-details/:txhash', async (req, res) => {
+app.post('/fetch-transaction-details/:txhash', async (req, res) => {
     const txhash = req.params.txhash;
 
     try {
@@ -808,7 +808,7 @@ async function recentTxs(settings) {
 /** @notice calls the recentTxs function for multiple chains
  * @dev maps the txs based on the chain and returns the value
  */
-app.get('/recent-txs', async (req, res) => {
+app.post('/recent-txs', async (req, res) => {
     try {
         const chains = {
             ethereum: settingsEthereum,
@@ -840,7 +840,7 @@ const cache_tokens = {
 /** @notice fetches the top 10 tokens based on market cap
  * @dev fetches the top 10 tokens based on market cap and filters out the EVM tokens
  */
-app.get('/top-tokens', async (req, res) => {
+app.post('/top-tokens', async (req, res) => {
     try {
         const metadata = await fetchTokenData();
         const evmTokenIds = new Set(metadata.map(token => token.address));
@@ -984,7 +984,7 @@ async function fetchAlgorandAddressDetails(address) {
  * @dev calls the fetchAlgorandAddressDetails function for a particular address
  * @param req -> req.params.address == the address passed
  */
-app.get('/fetch-algorand-details/:address', async (req, res) => {
+app.post('/fetch-algorand-details/:address', async (req, res) => {
     const address = req.params.address;
 
     if (!address) {
