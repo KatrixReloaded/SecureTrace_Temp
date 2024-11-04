@@ -516,8 +516,11 @@ app.get('/token-transfers/:address', async (req, res) => {
     try {
         const allTransfers = await Promise.all(Object.values(chains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address)));
         console.log("Transfers mapped \n", allTransfers);
-        Object.values(allTransfers).forEach(transfers => allFromTransfers.push(transfers.fromTransfers));
-        Object.values(allTransfers).forEach(transfers => allToTransfers.push(transfers.toTransfers));
+        
+        allTransfers.forEach(transfers => {
+            allFromTransfers.push(...transfers.fromTransfers);
+            allToTransfers.push(...transfers.toTransfers);
+        });
 
         res.json({
             from: allFromTransfers,
