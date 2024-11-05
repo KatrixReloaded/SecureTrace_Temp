@@ -78,7 +78,7 @@ app.use(cors({
 
 app.use(express.json());
 
-app.get('/', (req, res) => {
+app.post('/', (req, res) => {
     res.send('Hello, SecureTrace is live!');
 });
 
@@ -329,8 +329,8 @@ async function fetchAddressDetails(settings, address) {
 
 /** @dev address value is passed here and tokens across multiple chains are checked */
 /** @param req -> req.body == the address passed*/
-app.get('/fetch-address-details/:address', async (req, res) => {
-    const address = req.params.address;
+app.post('/fetch-address-details', async (req, res) => {
+    const address = req.body.address;
     const chains = {
         ethereum: settingsEthereum,
         arbitrum: settingsArbitrum,
@@ -499,10 +499,10 @@ async function tokenTransfers(settings, address) {
 
 /** @notice address value is passed here to fetch all to and from transfer of tokens from that address
  * @dev calls the tokenTransfers function for fetching transfers from multiple chains
- * @param req -> req.params.address == the address passed
+ * @param req -> req.body.address == the address passed
  */
-app.get('/token-transfers/:address', async (req, res) => {
-    const address = req.params.address;
+app.post('/token-transfers', async (req, res) => {
+    const address = req.body.address;
     const chains = {
         eth: settingsEthereum,
         arb: settingsArbitrum,
@@ -516,8 +516,11 @@ app.get('/token-transfers/:address', async (req, res) => {
     try {
         const allTransfers = await Promise.all(Object.values(chains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address)));
         console.log("Transfers mapped \n", allTransfers);
-        Object.values(allTransfers).forEach(transfers => allFromTransfers.push(transfers.fromTransfers));
-        Object.values(allTransfers).forEach(transfers => allToTransfers.push(transfers.toTransfers));
+        
+        allTransfers.forEach(transfers => {
+            allFromTransfers.push(...transfers.fromTransfers);
+            allToTransfers.push(...transfers.toTransfers);
+        });
 
         res.json({
             from: allFromTransfers,
@@ -642,10 +645,10 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
 
 /** @notice calls the fetchTokenTransfersFromTx function from different chains
  * @dev will only run for one chain to which the tx hash belongs to, written conditional statements so that it checks for which chain the tx belongs to
- * @param req.params.txhash -> the tx hash for which the transfers need to be fetched
+ * @param req.body.txhash -> the tx hash for which the transfers need to be fetched
  */
-app.get('/fetch-transaction-details/:txhash', async (req, res) => {
-    const txhash = req.params.txhash;
+app.post('/fetch-transaction-details', async (req, res) => {
+    const txhash = req.body.txhash;
 
     try {
         console.log("Fetching internal transfers for Ethereum");
@@ -708,11 +711,24 @@ app.get('/fetch-transaction-details/:txhash', async (req, res) => {
  * ----------------------------- RECENT TXS TABLE -------------------------------
  * --------------------------------------------------------------------------- */
 
+const cache_txs = {
+    recentTxs: null,
+    lastUpdated: 0,
+};
+
 /** @notice fetches all txs from the latest block of a chain
  * @dev called for every chain, stores tx details of all ERC-20 and native token transfer txs
  * @param settings -> settings for the chain for which the recent txs are being fetched
  */
 async function recentTxs(settings) {
+    const cacheDuration = 5 * 60 * 1000;
+    const now = Date.now();
+
+    if (cache_txs.recentTxs && (now - cache_txs.lastUpdated < cacheDuration)) {
+        console.log("Returning cached transactions");
+        return cache_txs.recentTxs;
+    }
+
     try {
         const alchemy = new Alchemy(settings);
         let currentBlock = await alchemy.core.getBlockNumber();
@@ -778,6 +794,10 @@ async function recentTxs(settings) {
         });
 
         console.log("Txs fetched", settings.network);
+
+        cache_txs.recentTxs = filteredTxs;
+        cache_txs.lastUpdated = now;
+
         return filteredTxs;
     } catch (error) {
         console.error('Error fetching recent transactions:', error);
@@ -788,7 +808,7 @@ async function recentTxs(settings) {
 /** @notice calls the recentTxs function for multiple chains
  * @dev maps the txs based on the chain and returns the value
  */
-app.get('/recent-txs', async (req, res) => {
+app.post('/recent-txs', async (req, res) => {
     try {
         const chains = {
             ethereum: settingsEthereum,
@@ -797,8 +817,9 @@ app.get('/recent-txs', async (req, res) => {
             polygon: settingsPolygon,
         };
         const allTransfers = await Promise.all(Object.values(chains).map(chain => recentTxs({apiKey: chain.apiKey, network: chain.network})));
-        console.log(allTransfers);
-        res.json({txs: allTransfers});
+        const mergedTransfers = allTransfers.flat();
+        console.log(mergedTransfers);
+        res.json({txs: mergedTransfers});
     } catch(error) {
         res.status(500).json({ error: 'An error occurred while fetching recent transactions' });
     }
@@ -810,7 +831,7 @@ app.get('/recent-txs', async (req, res) => {
  * --------------------------- TRENDING TOKENS PAGE -----------------------------
  * --------------------------------------------------------------------------- */
 
-const cache = {
+const cache_tokens = {
     data: null,
     lastFetched: 0,
     etag: null
@@ -819,17 +840,12 @@ const cache = {
 /** @notice fetches the top 10 tokens based on market cap
  * @dev fetches the top 10 tokens based on market cap and filters out the EVM tokens
  */
-app.get('/top-tokens', async (req, res) => {
+async function getTopTokens() {
     try {
-        const metadata = await fetchTokenData();
-        const evmTokenIds = new Set(metadata.map(token => token.address));
-
-        // Check cache (cache for 5 minutes)
-        if (cache.data && Date.now() - cache.lastFetched < 5 * 60 * 1000) {
-            return res.json(cache.data);
+        if (cache_tokens.data && Date.now() - cache_tokens.lastFetched < 5 * 60 * 1000) {
+            return cache_tokens.data;
         }
 
-        // Fetch from CoinGecko with ETag for conditional requests
         const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets', {
             params: {
                 vs_currency: 'usd',
@@ -838,29 +854,35 @@ app.get('/top-tokens', async (req, res) => {
                 page: 1
             },
             headers: {
-                'If-None-Match': cache.etag || ''
+                'If-None-Match': cache_tokens.etag || ''
             }
         });
 
-        // Update cache if data changed
         if (response.status === 200) {
-            cache.data = response.data;
-            cache.lastFetched = Date.now();
-            cache.etag = response.headers.etag;
-            res.json(cache.data);
+            cache_tokens.data = response.data;
+            cache_tokens.lastFetched = Date.now();
+            cache_tokens.etag = response.headers.etag;
+            return cache_tokens.data;
         } else if (response.status === 304) {
-            // Serve cached data if not modified
-            res.json(cache.data);
+            return cache_tokens.data;
         }
     } catch (error) {
         console.error("Failed to fetch top EVM tokens:", error);
 
-        if (cache.data) {
-            // Serve cached data if CoinGecko fails
-            res.json(cache.data);
+        if (cache_tokens.data) {
+            return cache_tokens.data;
         } else {
-            res.status(500).json({ error: 'Unable to retrieve top EVM token data.' });
+            throw new Error('Unable to retrieve top EVM token data.');
         }
+    }
+}
+
+app.post('/top-tokens', async (req, res) => {
+    try {
+        const topTokens = await getTopTokens();
+        res.json(topTokens);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -966,10 +988,10 @@ async function fetchAlgorandAddressDetails(address) {
 
 /**
  * @dev calls the fetchAlgorandAddressDetails function for a particular address
- * @param req -> req.params.address == the address passed
+ * @param req -> req.body.address == the address passed
  */
-app.get('/fetch-algorand-details/:address', async (req, res) => {
-    const address = req.params.address;
+app.post('/fetch-algorand-details/:address', async (req, res) => {
+    const address = req.body.address;
 
     if (!address) {
         return res.status(400).json({ error: 'Address is required' });

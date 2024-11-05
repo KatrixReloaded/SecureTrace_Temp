@@ -1,7 +1,7 @@
 # SecureTrace  
 ### A Blockchain Forensics Tool to track crypto assets and transactions  
   
-**Set up two variables in .env in the root directory**  
+**Set up six variables in .env in the root directory**  
 - ETHERSCAN_APIKEY  
 - ALCHEMY_APIKEY  
 - DB_HOST  
