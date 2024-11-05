@@ -840,13 +840,10 @@ const cache_tokens = {
 /** @notice fetches the top 10 tokens based on market cap
  * @dev fetches the top 10 tokens based on market cap and filters out the EVM tokens
  */
-app.post('/top-tokens', async (req, res) => {
+async function getTopTokens() {
     try {
-        const metadata = await fetchTokenData();
-        const evmTokenIds = new Set(metadata.map(token => token.address));
-
         if (cache_tokens.data && Date.now() - cache_tokens.lastFetched < 5 * 60 * 1000) {
-            return res.json(cache_tokens.data);
+            return cache_tokens.data;
         }
 
         const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets', {
@@ -865,18 +862,27 @@ app.post('/top-tokens', async (req, res) => {
             cache_tokens.data = response.data;
             cache_tokens.lastFetched = Date.now();
             cache_tokens.etag = response.headers.etag;
-            res.json(cache_tokens.data);
+            return cache_tokens.data;
         } else if (response.status === 304) {
-            res.json(cache_tokens.data);
+            return cache_tokens.data;
         }
     } catch (error) {
         console.error("Failed to fetch top EVM tokens:", error);
 
         if (cache_tokens.data) {
-            res.json(cache_tokens.data);
+            return cache_tokens.data;
         } else {
-            res.status(500).json({ error: 'Unable to retrieve top EVM token data.' });
+            throw new Error('Unable to retrieve top EVM token data.');
         }
+    }
+}
+
+app.post('/top-tokens', async (req, res) => {
+    try {
+        const topTokens = await getTopTokens();
+        res.json(topTokens);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
