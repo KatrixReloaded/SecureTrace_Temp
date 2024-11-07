@@ -19,8 +19,8 @@ npm start
   
 **Endpoints**  
 - `/fetch-address-details` for fetching holdings of an address  
-- `/token-transfers/:address` for fetching to and from transfer of tokens of an address  
-- `/fetch-transaction-details/:txhash` for fetching all token transfers that occurred in a transaction  
+- `/token-transfers` for fetching to and from transfer of tokens of an address  
+- `/fetch-transaction-details` for fetching all token transfers that occurred in a transaction  
 - `/recent-txs` for fetching latest txs across multiple chains  
 - `/top-tokens` for fetching top EVM based tokens by market cap  
-- `/fetch-algorand-details/:address` for fetching holdings of an Algorand address  
+- `/fetch-algorand-details` for fetching holdings of an Algorand address  
