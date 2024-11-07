@@ -1,7 +1,7 @@
 const mysql = require('mysql2/promise');
 const axios = require('axios');
 require('dotenv').config();
-const {getConnection} = require('./db');
+// const {getConnection} = require('./db');
 
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
@@ -14,7 +14,7 @@ const pool = mysql.createPool({
 });
 
 async function createTable() {
-    const connection = await getConnection();
+    const connection = await pool.getConnection();
     try {
         await connection.execute('CREATE TABLE TempTokens (address VARCHAR(42) PRIMARY KEY, name VARCHAR(255), symbol VARCHAR(255), decimals INT, chain VARCHAR(255), price DECIMAL(38,18), logoURL VARCHAR(1024))');
         // const [rows] = await connection.execute(`
@@ -70,7 +70,7 @@ async function createTable() {
 // }
 
 async function fetchPrices() {
-    const connection = await getConnection();
+    const connection = await pool.getConnection();
     try {
         const [tokens] = await connection.execute('SELECT chain, address FROM TempTokens');
         if (tokens.length === 0) return;
@@ -116,7 +116,7 @@ async function fetchPrices() {
 // fetchPrices();
 
 async function fetchData() {
-    const connection = await getConnection();
+    const connection = await pool.getConnection();
     try {
         const [rows] = await connection.query('SELECT * FROM TempTokens');
         console.log(rows);

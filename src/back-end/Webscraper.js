@@ -1,7 +1,7 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const mysql = require('mysql2/promise'); // For async/await MySQL handling
-const { getConnection } = require('./db');
+// const { getConnection } = require('./db');
 
 // Database setup
 const pool = mysql.createPool({
@@ -71,7 +71,7 @@ async function scrapeFromMultipleExplorers(urls) {
     const results = await Promise.all(scrapePromises);
     const allTokens = results.flat();
 
-    const connection = await getConnection();
+    const connection = await pool.getConnection();
     // await connection.execute('DELETE FROM TempTokens');
 
     try {
