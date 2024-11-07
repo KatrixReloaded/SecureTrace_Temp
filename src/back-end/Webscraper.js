@@ -1,6 +1,7 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const mysql = require('mysql2/promise'); // For async/await MySQL handling
+// const { getConnection } = require('./db');
 
 // Database setup
 const pool = mysql.createPool({
@@ -9,8 +10,12 @@ const pool = mysql.createPool({
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit: 15,
+    maxIdle: 10,
+    idleTimeout: 60000,
     queueLimit: 0,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
 });
 
 // Function to scrape tokens from a single URL
@@ -45,7 +50,7 @@ async function scrapeExplorerTokens(url) {
                                 : link === 'blastscan.io' ? "blast" 
                                     : link === 'optimistic.etherscan.io' ? "optimism" : null;
 
-                console.log({ name, symbol, address, logo, chain, link });
+                // console.log({ name, symbol, address, logo, chain, link });
                 tokens.push({ name, symbol, address, logo, chain });
             }
         });
@@ -76,10 +81,9 @@ async function scrapeFromMultipleExplorers(urls) {
         const insertQuery = `INSERT IGNORE INTO TempTokens (name, symbol, address, logoURL, chain) VALUES (?, ?, ?, ?, ?)`;
         
         for (const token of allTokens) {
-            await connection.execute(insertQuery, [token.name, token.symbol, token.address, token.logo, token.chain]);
+            await connection.query(insertQuery, [token.name, token.symbol, token.address, token.logo, token.chain]);
         }
 
-        await connection.commit();
         console.log('All tokens successfully stored in TempTokens!');
     } catch (error) {
         await connection.rollback();

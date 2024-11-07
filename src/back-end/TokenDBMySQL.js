@@ -1,6 +1,7 @@
 const mysql = require('mysql2/promise');
 const axios = require('axios');
 require('dotenv').config();
+// const {getConnection} = require('./db');
 
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
@@ -11,6 +12,62 @@ const pool = mysql.createPool({
     connectionLimit: 10,
     queueLimit: 0,
 });
+
+async function createTable() {
+    const connection = await pool.getConnection();
+    try {
+        await connection.execute('CREATE TABLE TempTokens (address VARCHAR(42) PRIMARY KEY, name VARCHAR(255), symbol VARCHAR(255), decimals INT, chain VARCHAR(255), price DECIMAL(38,18), logoURL VARCHAR(1024))');
+        // const [rows] = await connection.execute(`
+        //     SELECT COLUMN_NAME, DATA_TYPE 
+        //     FROM INFORMATION_SCHEMA.COLUMNS 
+        //     WHERE TABLE_NAME = 'TempTokens' AND TABLE_SCHEMA = DATABASE()
+        // `);
+
+        // console.log('Columns and their data types:');
+        // rows.forEach(row => {
+        //     console.log(`Column: ${row.COLUMN_NAME}, Data Type: ${row.DATA_TYPE}`);
+        // });
+        console.log(rows);
+        console.log('Table created successfully!');
+    } catch (error) {
+        console.error('Error creating table:', error);
+    } finally {
+        connection.release();
+    }
+}
+
+// async function createTable() {
+//     let connection;
+
+//     try {
+//         // Get the database connection
+//         connection = await getConnection();
+
+//         // SQL query to create the TempTokens table
+//         const createTableQuery = `
+//             CREATE TABLE TempTokens (
+//                 address VARCHAR(42) PRIMARY KEY, 
+//                 name VARCHAR(255), 
+//                 symbol VARCHAR(255), 
+//                 decimals INT, 
+//                 chain VARCHAR(255), 
+//                 price DECIMAL(38,18), 
+//                 logoURL VARCHAR(1024)
+//             )
+//         `;
+
+//         // Execute the query
+//         await connection.query(createTableQuery);
+
+//         console.log('Table created successfully!');
+//     } catch (error) {
+//         console.error('Error creating table:', error);
+//     } finally {
+//         if (connection) {
+//             connection.release();  // Ensure the connection is released
+//         }
+//     }
+// }
 
 async function fetchPrices() {
     const connection = await pool.getConnection();
@@ -56,4 +113,18 @@ async function fetchPrices() {
     }
 }
 
-fetchPrices();
+// fetchPrices();
+
+async function fetchData() {
+    const connection = await pool.getConnection();
+    try {
+        const [rows] = await connection.query('SELECT * FROM TempTokens');
+        console.log(rows);
+    } catch(error) {
+        console.error(error);
+    } finally {
+        connection.release();
+    }
+}
+
+fetchData();
