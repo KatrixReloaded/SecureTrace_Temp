@@ -619,7 +619,6 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
             // const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === name.toLowerCase());
             // if(tokenId) {
                 const tokenTransfer = {
-                    chain: tokenMetadata.chain,
                     from,
                     to,
                     value: ethers.formatUnits(value, tokenMetadata.decimals),
