@@ -546,7 +546,7 @@ app.post('/token-transfers', async (req, res) => {
 async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
     try {
         const validTokenAddresses = await fetchTokenList();
-        tokenNameToId = await fetchTokenData();
+        metadata = await fetchTokenData();
         const provider = new ethers.JsonRpcProvider(`${providerUrl}`);
         const alchemy = new Alchemy(settings);
         const receipt = await alchemy.core.getTransactionReceipt(txHash);
@@ -568,29 +568,31 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
                 value: ethers.formatEther(tx.value._hex),
                 tokenName: "Polygon",
                 tokenSymbol: "MATIC",
-                contractAddress: null,
-                tokenPrice: null
+                tokenAddress: null,
+                tokenPrice: null,
+                blockNumber: receipt.blockNumber
             } : {
                 from: tx.from,
                 to: tx.to,
                 value: ethers.formatEther(tx.value._hex),
                 tokenName: "Ethereum",
                 tokenSymbol: "ETH",
-                contractAddress: null,
-                tokenPrice: null
+                tokenAddress: null,
+                tokenPrice: null,
+                blockNumber: receipt.blockNumber
             };
             
-            const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === nativeTransfer.tokenName.toLowerCase());
-            if(tokenId) {
-                const tokenPrice = await fetchTokenPrices([tokenId.id]);
-                nativeTransfer.tokenPrice = tokenPrice[tokenId.id] ? tokenPrice[tokenId.id].usd : 0;
-            }
+            // const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === nativeTransfer.tokenName.toLowerCase());
+            // if(tokenId) {
+            //     const tokenPrice = await fetchTokenPrices([tokenId.id]);
+            //     nativeTransfer.tokenPrice = tokenPrice[tokenId.id] ? tokenPrice[tokenId.id].usd : 0;
+            // }
             console.log("Native Transfer", nativeTransfer);
             decodedTransfers.push(nativeTransfer);
         }
 
         const tokenTransfers = receipt.logs.filter(log => log.topics[0] === ERC20_TRANSFER_TOPIC);
-        let tokenIds = [];
+        let tokenAddresses = [];
         const decodedTokenTransfers = await Promise.all(tokenTransfers.map(async (log) => {
             if(!validTokenAddresses.has(log.address.toLowerCase())) {
                 return {};
@@ -598,46 +600,57 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
             const from = ethers.getAddress(log.topics[1].slice(26));
             const to = ethers.getAddress(log.topics[2].slice(26));
             const value = BigInt(log.data);
-            const contract = new ethers.Contract(log.address, ERC20_ABI, provider);
-            let name = "";
-            let symbol = "";
-            let decimals = 0;
-            try {
-                name = await contract.name();
-                symbol = await contract.symbol();
-                decimals = await contract.decimals();
-            } catch (error) {
-                console.error(`Error fetching token details for ${log.address}:`, error);
-            }
-            
-            const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === name.toLowerCase());
-            if(tokenId) {
-                const tokenTransfer = {
-                    from,
-                    to,
-                    value: ethers.formatUnits(value, decimals),
-                    contractAddress: log.address,
-                    tokenName: name,
-                    tokenSymbol: symbol,
-                    tokenId: tokenId.id,
-                    tokenPrice: 0
-                }
-                tokenIds.push(tokenTransfer.tokenId);
-
-                return tokenTransfer;
-            } else {
+            // const contract = new ethers.Contract(log.address, ERC20_ABI, provider);
+            // let name = "";
+            // let symbol = "";
+            // let decimals = 0;
+            // try {
+            //     name = await contract.name();
+            //     symbol = await contract.symbol();
+            //     decimals = await contract.decimals();
+            // } catch (error) {
+            //     console.error(`Error fetching token details for ${log.address}:`, error);
+            // }
+            const tokenMetadata = metadata.find(m => m.address === log.address.toLowerCase());
+            if (!tokenMetadata) {
                 return {};
             }
+            
+            // const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === name.toLowerCase());
+            // if(tokenId) {
+                const tokenTransfer = {
+                    chain: tokenMetadata.chain,
+                    from,
+                    to,
+                    value: ethers.formatUnits(value, tokenMetadata.decimals),
+                    tokenAddress: log.address.toLowerCase(),
+                    tokenName: tokenMetadata.name,
+                    tokenSymbol: tokenMetadata.symbol,
+                    logoURL: tokenMetadata.logo,
+                    tokenPrice: 0,
+                    blockNumber: receipt.blockNumber
+                }
+                tokenAddresses.push(log.address.toLowerCase());
+
+                return tokenTransfer;
+            // } else {
+            //     return {};
+            // }
         }));
 
-        const tokenPrices = await fetchTokenPrices(tokenIds);
-        Object.values(decodedTokenTransfers).forEach(transfer => {
-            const tokenId = transfer.tokenId;
-            transfer.tokenPrice = tokenPrices[tokenId] ? tokenPrices[tokenId].usd : 0;
-            console.log(transfer.tokenName, transfer.value, transfer.tokenSymbol, transfer.tokenPrice, "USD");
-        });
+        const filteredTokenTransfers = Object.fromEntries(
+            Object.entries(decodedTokenTransfers).filter(([key, value]) => Object.keys(value).length !== 0)
+        );
 
-        return [...decodedTransfers, ...decodedTokenTransfers.filter(t => Object.keys(t).length)];
+        const tokenPrices = await fetchTokenPrices(tokenAddresses);
+        Object.values(filteredTokenTransfers).forEach(transfer => {
+            const tokenAddress = transfer.tokenAddress.toLowerCase();
+            transfer.tokenPrice = tokenPrices[tokenAddress] ? tokenPrices[tokenAddress].usd : 0;
+            //console.log(transfer.tokenName, transfer.value, transfer.tokenSymbol, transfer.tokenPrice, "USD");
+        });
+        const finalTokenTransfers = Object.values(filteredTokenTransfers).filter(t => Object.keys(t).length);
+
+        return [...decodedTransfers, ...finalTokenTransfers];
     } catch (error) {
         console.error('Error fetching token transfers:', error);
     }

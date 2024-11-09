@@ -1,8 +1,7 @@
 # SecureTrace  
 ### A Blockchain Forensics Tool to track crypto assets and transactions  
   
-**Set up six variables in .env in the root directory**  
-- ETHERSCAN_APIKEY  
+**Set up five variables in .env in the root directory**  
 - ALCHEMY_APIKEY  
 - DB_HOST  
 - DB_USER  
@@ -20,8 +19,8 @@ npm start
   
 **Endpoints**  
 - `/fetch-address-details` for fetching holdings of an address  
-- `/token-transfers/:address` for fetching to and from transfer of tokens of an address  
-- `/fetch-transaction-details/:txhash` for fetching all token transfers that occurred in a transaction  
+- `/token-transfers` for fetching to and from transfer of tokens of an address  
+- `/fetch-transaction-details` for fetching all token transfers that occurred in a transaction  
 - `/recent-txs` for fetching latest txs across multiple chains  
 - `/top-tokens` for fetching top EVM based tokens by market cap  
-- `/fetch-algorand-details/:address` for fetching holdings of an Algorand address  
+- `/fetch-algorand-details` for fetching holdings of an Algorand address  
