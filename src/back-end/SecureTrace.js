@@ -509,7 +509,7 @@ app.post('/token-transfers', async (req, res) => {
         opt: settingsOptimism,
         pol: settingsPolygon,
         // zk: settingsZksync,
-    }
+    };
     const allFromTransfers = [];
     const allToTransfers = [];
 
@@ -526,6 +526,26 @@ app.post('/token-transfers', async (req, res) => {
             from: allFromTransfers,
             to: allToTransfers,
         });
+    } catch (error) {
+        res.status(500).json({ error: 'An error occurred while fetching token transfers' });
+    }
+});
+
+async function filteredTokenTransfers(address, settings, blockNum, assets) {}
+
+app.post('/token-transfers-filtered', async (req, res) => {
+    const address = req.body.address;
+    const blockNum = req.body.blockNum;
+    const asset = req.body.asset;
+    const chains = {
+        eth: settingsEthereum,
+        arb: settingsArbitrum,
+        opt: settingsOptimism,
+        pol: settingsPolygon,
+    };
+
+    try {
+
     } catch (error) {
         res.status(500).json({ error: 'An error occurred while fetching token transfers' });
     }
