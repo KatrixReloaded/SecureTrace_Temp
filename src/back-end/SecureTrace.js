@@ -376,7 +376,7 @@ app.post('/fetch-address-details', async (req, res) => {
  * @param settings -> alchemy settings for different chains
  * @param address -> the address value for which the transfers need to be checked
  */
-async function tokenTransfers(settings, address) {
+async function tokenTransfers(settings, address, blockNum) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
     const metadata = await fetchTokenData();
@@ -386,7 +386,7 @@ async function tokenTransfers(settings, address) {
 
         if(direction === 'from') {
             transfers = await alchemy.core.getAssetTransfers({
-                fromBlock: '0x0',
+                fromBlock: blockNum,
                 toBlock: 'latest',
                 fromAddress: address,
                 category: ['erc20', 'external'],
@@ -396,7 +396,7 @@ async function tokenTransfers(settings, address) {
             });
         } else {
             transfers = await alchemy.core.getAssetTransfers({
-                fromBlock: '0x0',
+                fromBlock: blockNum,
                 toBlock: 'latest',
                 toAddress: address,
                 category: ['erc20', 'external'],
@@ -457,6 +457,7 @@ async function tokenTransfers(settings, address) {
                 tokenName: tokenMetadata.name,
                 chain: tokenMetadata.chain,
                 logo: tokenMetadata.logo,
+                blockNum: tx.blockNum
             };
         }));
 
@@ -503,18 +504,19 @@ async function tokenTransfers(settings, address) {
  */
 app.post('/token-transfers', async (req, res) => {
     const address = req.body.address;
+    const blockNum = req.body.blockNum || '0x0';
     const chains = {
         eth: settingsEthereum,
         arb: settingsArbitrum,
         opt: settingsOptimism,
         pol: settingsPolygon,
         // zk: settingsZksync,
-    }
+    };
     const allFromTransfers = [];
     const allToTransfers = [];
 
     try {
-        const allTransfers = await Promise.all(Object.values(chains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address)));
+        const allTransfers = await Promise.all(Object.values(chains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
         console.log("Transfers mapped \n", allTransfers);
         
         allTransfers.forEach(transfers => {
@@ -556,6 +558,8 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
             return 0;
         }
 
+        const blockNumHex = '0x'+receipt.blockNumber.toString(16);
+
         console.log(`Found ${receipt.logs.length} logs in the transaction...`);
         
         const tx = await alchemy.core.getTransaction(txHash);
@@ -570,7 +574,7 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
                 tokenSymbol: "MATIC",
                 tokenAddress: null,
                 tokenPrice: null,
-                blockNumber: receipt.blockNumber
+                blockNum: blockNumHex
             } : {
                 from: tx.from,
                 to: tx.to,
@@ -579,7 +583,7 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
                 tokenSymbol: "ETH",
                 tokenAddress: null,
                 tokenPrice: null,
-                blockNumber: receipt.blockNumber
+                blockNum: blockNumHex
             };
             
             // const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === nativeTransfer.tokenName.toLowerCase());
@@ -619,7 +623,6 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
             // const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === name.toLowerCase());
             // if(tokenId) {
                 const tokenTransfer = {
-                    chain: tokenMetadata.chain,
                     from,
                     to,
                     value: ethers.formatUnits(value, tokenMetadata.decimals),
@@ -628,7 +631,7 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
                     tokenSymbol: tokenMetadata.symbol,
                     logoURL: tokenMetadata.logo,
                     tokenPrice: 0,
-                    blockNumber: receipt.blockNumber
+                    blockNum: blockNumHex
                 }
                 tokenAddresses.push(log.address.toLowerCase());
 
