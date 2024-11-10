@@ -376,17 +376,19 @@ app.post('/fetch-address-details', async (req, res) => {
  * @param settings -> alchemy settings for different chains
  * @param address -> the address value for which the transfers need to be checked
  */
-async function tokenTransfers(settings, address) {
+async function tokenTransfers(settings, address, blockNum) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
     const metadata = await fetchTokenData();
+
+    const fromBlock = blockNum === 0 ? '0x0' : '0x' + blockNum.toString(16);
 
     const fetchTransfers = async (direction) => {
         let transfers = {};
 
         if(direction === 'from') {
             transfers = await alchemy.core.getAssetTransfers({
-                fromBlock: '0x0',
+                fromBlock: fromBlock,
                 toBlock: 'latest',
                 fromAddress: address,
                 category: ['erc20', 'external'],
@@ -396,7 +398,7 @@ async function tokenTransfers(settings, address) {
             });
         } else {
             transfers = await alchemy.core.getAssetTransfers({
-                fromBlock: '0x0',
+                fromBlock: fromBlock,
                 toBlock: 'latest',
                 toAddress: address,
                 category: ['erc20', 'external'],
@@ -503,6 +505,7 @@ async function tokenTransfers(settings, address) {
  */
 app.post('/token-transfers', async (req, res) => {
     const address = req.body.address;
+    const blockNum = req.body.blockNum || 0;
     const chains = {
         eth: settingsEthereum,
         arb: settingsArbitrum,
@@ -514,7 +517,7 @@ app.post('/token-transfers', async (req, res) => {
     const allToTransfers = [];
 
     try {
-        const allTransfers = await Promise.all(Object.values(chains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address)));
+        const allTransfers = await Promise.all(Object.values(chains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
         console.log("Transfers mapped \n", allTransfers);
         
         allTransfers.forEach(transfers => {
@@ -526,26 +529,6 @@ app.post('/token-transfers', async (req, res) => {
             from: allFromTransfers,
             to: allToTransfers,
         });
-    } catch (error) {
-        res.status(500).json({ error: 'An error occurred while fetching token transfers' });
-    }
-});
-
-async function filteredTokenTransfers(address, settings, blockNum, assets) {}
-
-app.post('/token-transfers-filtered', async (req, res) => {
-    const address = req.body.address;
-    const blockNum = req.body.blockNum;
-    const asset = req.body.asset;
-    const chains = {
-        eth: settingsEthereum,
-        arb: settingsArbitrum,
-        opt: settingsOptimism,
-        pol: settingsPolygon,
-    };
-
-    try {
-
     } catch (error) {
         res.status(500).json({ error: 'An error occurred while fetching token transfers' });
     }
