@@ -381,14 +381,12 @@ async function tokenTransfers(settings, address, blockNum) {
     const validTokenAddresses = await fetchTokenList();
     const metadata = await fetchTokenData();
 
-    const fromBlock = blockNum === 0 ? '0x0' : '0x' + blockNum.toString(16);
-
     const fetchTransfers = async (direction) => {
         let transfers = {};
 
         if(direction === 'from') {
             transfers = await alchemy.core.getAssetTransfers({
-                fromBlock: fromBlock,
+                fromBlock: blockNum,
                 toBlock: 'latest',
                 fromAddress: address,
                 category: ['erc20', 'external'],
@@ -398,7 +396,7 @@ async function tokenTransfers(settings, address, blockNum) {
             });
         } else {
             transfers = await alchemy.core.getAssetTransfers({
-                fromBlock: fromBlock,
+                fromBlock: blockNum,
                 toBlock: 'latest',
                 toAddress: address,
                 category: ['erc20', 'external'],
@@ -459,6 +457,7 @@ async function tokenTransfers(settings, address, blockNum) {
                 tokenName: tokenMetadata.name,
                 chain: tokenMetadata.chain,
                 logo: tokenMetadata.logo,
+                blockNum: tx.blockNum
             };
         }));
 
@@ -505,7 +504,7 @@ async function tokenTransfers(settings, address, blockNum) {
  */
 app.post('/token-transfers', async (req, res) => {
     const address = req.body.address;
-    const blockNum = req.body.blockNum || 0;
+    const blockNum = req.body.blockNum || '0x0';
     const chains = {
         eth: settingsEthereum,
         arb: settingsArbitrum,
@@ -559,6 +558,8 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
             return 0;
         }
 
+        const blockNumHex = '0x'+receipt.blockNumber.toString(16);
+
         console.log(`Found ${receipt.logs.length} logs in the transaction...`);
         
         const tx = await alchemy.core.getTransaction(txHash);
@@ -573,7 +574,7 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
                 tokenSymbol: "MATIC",
                 tokenAddress: null,
                 tokenPrice: null,
-                blockNumber: receipt.blockNumber
+                blockNum: blockNumHex
             } : {
                 from: tx.from,
                 to: tx.to,
@@ -582,7 +583,7 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
                 tokenSymbol: "ETH",
                 tokenAddress: null,
                 tokenPrice: null,
-                blockNumber: receipt.blockNumber
+                blockNum: blockNumHex
             };
             
             // const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === nativeTransfer.tokenName.toLowerCase());
@@ -630,7 +631,7 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
                     tokenSymbol: tokenMetadata.symbol,
                     logoURL: tokenMetadata.logo,
                     tokenPrice: 0,
-                    blockNumber: receipt.blockNumber
+                    blockNum: blockNumHex
                 }
                 tokenAddresses.push(log.address.toLowerCase());
 
