@@ -510,7 +510,7 @@ async function backwardTokenTransfers(settings, address, startBlock) {
         console.log("Start Block", startBlock);
         // console.log("Current block hex", '0x'+currentBlock.toString(16));
 
-        while (currentBlock > 0 && iterations < 100) {
+        while (currentBlock > 0 && iterations < 50) {
             const toBlock = '0x'+currentBlock.toString(16);
             console.log("To Block", toBlock);
             const fromBlock = '0x'+Math.max(currentBlock - batchSize, 0).toString(16); // Go backward in batches
@@ -635,19 +635,19 @@ app.post('/token-transfers', async (req, res) => {
 
     try {
         // const allTransfers = [];
-        // if(isFrom) {
+        if(isFrom) {
             const allTransfers = await Promise.all(Object.values(chains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
             allTransfers.forEach(transfers => {
                 allFromTransfers.push(...transfers.fromTransfers);
                 allToTransfers.push(...transfers.toTransfers);
             });
-        // } else {
-        //     const allTransfers = await Promise.all(Object.values(chains).map(chain => backwardTokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
-        //     allTransfers.forEach(transfers => {
-        //         allFromTransfers.push(...transfers.fromTransfers);
-        //         allToTransfers.push(...transfers.toTransfers);
-        //     });
-        // }
+        } else {
+            const allTransfers = await Promise.all(Object.values(chains).map(chain => backwardTokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
+            allTransfers.forEach(transfers => {
+                allFromTransfers.push(...transfers.fromTransfers);
+                allToTransfers.push(...transfers.toTransfers);
+            });
+        }
         
         res.json({
             from: allFromTransfers,
