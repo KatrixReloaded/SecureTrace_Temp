@@ -497,6 +497,123 @@ async function tokenTransfers(settings, address, blockNum) {
     }
 }
 
+async function backwardTokenTransfers(settings, address, startBlock) {
+    const alchemy = new Alchemy(settings);
+    const validTokenAddresses = await fetchTokenList();
+    const metadata = await fetchTokenData();
+    const batchSize = 1000; // Block batch size to fetch in each iteration
+    let iterations = 0;
+    const fetchTransfersBackward = async (direction) => {
+        let allTransfers = [];
+        let currentBlock = parseInt(startBlock, 16);
+        console.log("Current Block", currentBlock);
+        console.log("Start Block", startBlock);
+        // console.log("Current block hex", '0x'+currentBlock.toString(16));
+
+        while (currentBlock > 0 && iterations < 50) {
+            const toBlock = '0x'+currentBlock.toString(16);
+            console.log("To Block", toBlock);
+            const fromBlock = '0x'+Math.max(currentBlock - batchSize, 0).toString(16); // Go backward in batches
+            let transfers = {};
+
+            if (direction === 'from') {
+                transfers = await alchemy.core.getAssetTransfers({
+                    fromBlock: fromBlock,
+                    toBlock: toBlock,
+                    fromAddress: address,
+                    category: ['erc20', 'external'],
+                    withMetadata: true,
+                    excludeZeroValue: true,
+                    maxCount: 100,
+                });
+            } else {
+                transfers = await alchemy.core.getAssetTransfers({
+                    fromBlock: fromBlock,
+                    toBlock: toBlock,
+                    toAddress: address,
+                    category: ['erc20', 'external'],
+                    withMetadata: true,
+                    excludeZeroValue: true,
+                    maxCount: 100,
+                });
+            }
+
+            let filteredTxs = transfers.transfers.filter(tx => {
+                if (tx.category === 'erc20') {
+                    const isValidToken = validTokenAddresses.has(tx.rawContract.address.toLowerCase());
+                    return isValidToken;
+                } else if (tx.category === 'external') {
+                    return true;
+                }
+                return false;
+            });
+
+            filteredTxs = await Promise.all(filteredTxs.map(async (tx) => {
+                let contractAddress = tx.rawContract?.address;
+                if (!contractAddress) return null;
+
+                contractAddress = contractAddress.toLowerCase();
+
+                const tokenMetadata = metadata.find(m => m.address === contractAddress);
+                if (!tokenMetadata) return null;
+
+                return {
+                    txHash: tx.hash,
+                    from: tx.from,
+                    to: tx.to,
+                    value: tx.value,
+                    decimals: tokenMetadata.decimals || 18,
+                    symbol: tokenMetadata.symbol,
+                    tokenAddress: contractAddress,
+                    timestamp: tx.metadata.blockTimestamp,
+                    tokenPrice: null,
+                    tokenName: tokenMetadata.name,
+                    chain: tokenMetadata.chain,
+                    logo: tokenMetadata.logo,
+                    blockNum: tx.blockNum,
+                };
+            }));
+
+            if(filteredTxs.length === 0) {
+                iterations++;
+            } else {
+                iterations = 0;
+            }
+
+            // Add filtered transactions and check if we've reached the limit
+            allTransfers.push(...filteredTxs.filter(tx => tx !== null));
+            if (allTransfers.length >= 100) {
+                allTransfers = allTransfers.slice(0, 100); // Ensure exactly 100 transfers
+                break;
+            }
+
+            currentBlock = parseInt(fromBlock, 16);
+
+        }
+
+        const addresses = allTransfers.map(tx => tx.tokenAddress);
+        const tokenPrices = await fetchTokenPrices(addresses);
+        allTransfers.forEach(tx => {
+            const address = tx.tokenAddress;
+            tx.tokenPrice = tokenPrices[address] ? tokenPrices[address].usd : 0;
+        });
+
+        return allTransfers;
+    };
+
+    try {
+        const [fromTransfers, toTransfers] = await Promise.all([
+            fetchTransfersBackward('from'),
+            fetchTransfersBackward('to'),
+        ]);
+
+        return { fromTransfers, toTransfers };
+    } catch (error) {
+        console.error('Error fetching backward token transfers:', error);
+        return { fromTransfers: [], toTransfers: [] };
+    }
+}
+
 
 /** @notice address value is passed here to fetch all to and from transfer of tokens from that address
  * @dev calls the tokenTransfers function for fetching transfers from multiple chains
@@ -505,6 +622,7 @@ async function tokenTransfers(settings, address, blockNum) {
 app.post('/token-transfers', async (req, res) => {
     const address = req.body.address;
     const blockNum = req.body.blockNum || '0x0';
+    const isFrom = req.body.bool !== undefined ? req.body.bool : true;
     const chains = {
         eth: settingsEthereum,
         arb: settingsArbitrum,
@@ -516,14 +634,21 @@ app.post('/token-transfers', async (req, res) => {
     const allToTransfers = [];
 
     try {
-        const allTransfers = await Promise.all(Object.values(chains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
-        console.log("Transfers mapped \n", allTransfers);
+        // const allTransfers = [];
+        if(isFrom) {
+            const allTransfers = await Promise.all(Object.values(chains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
+            allTransfers.forEach(transfers => {
+                allFromTransfers.push(...transfers.fromTransfers);
+                allToTransfers.push(...transfers.toTransfers);
+            });
+        } else {
+            const allTransfers = await Promise.all(Object.values(chains).map(chain => backwardTokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
+            allTransfers.forEach(transfers => {
+                allFromTransfers.push(...transfers.fromTransfers);
+                allToTransfers.push(...transfers.toTransfers);
+            });
+        }
         
-        allTransfers.forEach(transfers => {
-            allFromTransfers.push(...transfers.fromTransfers);
-            allToTransfers.push(...transfers.toTransfers);
-        });
-
         res.json({
             from: allFromTransfers,
             to: allToTransfers,
