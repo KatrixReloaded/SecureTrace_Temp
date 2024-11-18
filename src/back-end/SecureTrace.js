@@ -6,6 +6,10 @@ const { ethers } = require('ethers');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
 const algosdk = require('algosdk');
+const NodeCache = require('node-cache');
+const Semaphore = require('semaphore');
+const cache = new NodeCache({ stdTTL: 300 }); // Cache TTL of 5 minutes
+const semaphore = Semaphore(5); // Limit to 5 concurrent API calls
 // const { addOrUpdateTokenPrice } = require('./TokenPricesDB');
 
 
@@ -125,15 +129,15 @@ let tokenNameToId;
   * @param target function to set a timeout for it
  */
  async function fetchWithTimeout(fetchFunction, timeout = 5000) {
-     const abortController = new AbortController();
-     const id = setTimeout(() => abortController.abort(), timeout);
-     try {
-         const result = await fetchFunction();
-         clearTimeout(id);
-         return result;
-     } catch (error) {
-         throw new Error('Request timed out');
-     }
+    const abortController = new AbortController();
+    const id = setTimeout(() => abortController.abort(), timeout);
+    try {
+        const result = await fetchFunction();
+        clearTimeout(id);
+        return result;
+    } catch (error) {
+        throw new Error('Request timed out');
+    }
  }
 
 /** @dev checks whether the token is a valid/official token and not some bs */
@@ -497,99 +501,147 @@ async function tokenTransfers(settings, address, blockNum) {
     }
 }
 
+const metadataCache = new Map();
+const validTokenSet = new Set();
+
 async function backwardTokenTransfers(settings, address, startBlock) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
     const metadata = await fetchTokenData();
-    const batchSize = 1000; // Block batch size to fetch in each iteration
-    let iterations = 0;
-    const fetchTransfersBackward = async (direction) => {
-        let allTransfers = [];
-        let currentBlock = parseInt(startBlock, 16);
-        console.log("Current Block", currentBlock);
-        console.log("Start Block", startBlock);
-        // console.log("Current block hex", '0x'+currentBlock.toString(16));
+    
+    const initialBatchSize = 1000;
+    const maxRetries = 3;
+    const baseDelay = 500;
+    
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-        while (currentBlock > 0 && iterations < 50) {
-            const toBlock = '0x'+currentBlock.toString(16);
-            console.log("To Block", toBlock);
-            const fromBlock = '0x'+Math.max(currentBlock - batchSize, 0).toString(16); // Go backward in batches
-            let transfers = {};
+    const processTransfers = async (transfers) => {
+        if (validTokenSet.size === 0) {
+            validTokenAddresses.forEach(addr => validTokenSet.add(addr.toLowerCase()));
+        }
 
-            if (direction === 'from') {
-                transfers = await alchemy.core.getAssetTransfers({
-                    fromBlock: fromBlock,
-                    toBlock: toBlock,
-                    fromAddress: address,
-                    category: ['erc20', 'external'],
-                    withMetadata: true,
-                    excludeZeroValue: true,
-                    maxCount: 100,
-                });
-            } else {
-                transfers = await alchemy.core.getAssetTransfers({
-                    fromBlock: fromBlock,
-                    toBlock: toBlock,
-                    toAddress: address,
-                    category: ['erc20', 'external'],
-                    withMetadata: true,
-                    excludeZeroValue: true,
-                    maxCount: 100,
-                });
+        const transfersByContract = new Map();
+        transfers.forEach(tx => {
+            if (tx.category === 'erc20') {
+                const contractAddress = tx.rawContract?.address?.toLowerCase();
+                if (contractAddress && validTokenSet.has(contractAddress)) {
+                    if (!transfersByContract.has(contractAddress)) {
+                        transfersByContract.set(contractAddress, []);
+                    }
+                    transfersByContract.get(contractAddress).push(tx);
+                }
+            }
+        });
+
+        const processedTransfers = [];
+        
+        await Promise.all(Array.from(transfersByContract.entries()).map(async ([contractAddress, txs]) => {
+            let tokenMetadata = metadataCache.get(contractAddress);
+            if (!tokenMetadata) {
+                tokenMetadata = metadata.find(m => m.address === contractAddress);
+                if (tokenMetadata) {
+                    metadataCache.set(contractAddress, tokenMetadata);
+                }
             }
 
-            let filteredTxs = transfers.transfers.filter(tx => {
-                if (tx.category === 'erc20') {
-                    const isValidToken = validTokenAddresses.has(tx.rawContract.address.toLowerCase());
-                    return isValidToken;
-                } else if (tx.category === 'external') {
-                    return true;
+            if (tokenMetadata) {
+                txs.forEach(tx => {
+                    processedTransfers.push({
+                        txHash: tx.hash,
+                        from: tx.from,
+                        to: tx.to,
+                        value: tx.value,
+                        decimals: tokenMetadata.decimals || 18,
+                        symbol: tokenMetadata.symbol,
+                        tokenAddress: contractAddress,
+                        timestamp: tx.metadata.blockTimestamp,
+                        tokenPrice: null,
+                        tokenName: tokenMetadata.name,
+                        chain: tokenMetadata.chain,
+                        logo: tokenMetadata.logo,
+                        blockNum: tx.blockNum,
+                    });
+                });
+            }
+        }));
+
+        return processedTransfers;
+    };
+
+    const fetchRange = async (fromBlock, toBlock, direction) => {
+        let retries = 0;
+        while (retries < maxRetries) {
+            try {
+                if (retries > 0) {
+                    await sleep(baseDelay * Math.pow(2, retries));
                 }
-                return false;
-            });
+                return await new Promise((resolve, reject) => {
+                    semaphore.take(async () => {
+                        try {
+                            const result = await alchemy.core.getAssetTransfers({
+                                fromBlock,
+                                toBlock,
+                                [direction === 'from' ? 'fromAddress' : 'toAddress']: address,
+                                category: ['erc20', 'external'],
+                                withMetadata: true,
+                                excludeZeroValue: true,
+                                maxCount: 100,
+                            });
+                            resolve(result);
+                        } catch (error) {
+                            reject(error);
+                        } finally {
+                            semaphore.leave();
+                        }
+                    });
+                });
+            } catch (error) {
+                retries++;
+                console.error(`Error fetching range (attempt ${retries}):`, error);
+                if (retries === maxRetries) return { transfers: [] };
+            }
+        }
+        return { transfers: [] };
+    };
 
-            filteredTxs = await Promise.all(filteredTxs.map(async (tx) => {
-                let contractAddress = tx.rawContract?.address;
-                if (!contractAddress) return null;
+    const fetchTransfersBackward = async (direction) => {
+        const cacheKey = `${address}-${startBlock}-${direction}`;
+        const cachedResult = cache.get(cacheKey);
+        if (cachedResult) {
+            return cachedResult;
+        }
 
-                contractAddress = contractAddress.toLowerCase();
+        let allTransfers = [];
+        let currentBlock = parseInt(startBlock, 16);
+        let currentBatchSize = initialBatchSize;
+        let iterations = 0;
 
-                const tokenMetadata = metadata.find(m => m.address === contractAddress);
-                if (!tokenMetadata) return null;
+        while (currentBlock > 0 && iterations < 10 && allTransfers.length < 100) {
+            const toBlock = '0x' + currentBlock.toString(16);
+            const fromBlock = '0x' + Math.max(currentBlock - currentBatchSize, 0).toString(16);
 
-                return {
-                    txHash: tx.hash,
-                    from: tx.from,
-                    to: tx.to,
-                    value: tx.value,
-                    decimals: tokenMetadata.decimals || 18,
-                    symbol: tokenMetadata.symbol,
-                    tokenAddress: contractAddress,
-                    timestamp: tx.metadata.blockTimestamp,
-                    tokenPrice: null,
-                    tokenName: tokenMetadata.name,
-                    chain: tokenMetadata.chain,
-                    logo: tokenMetadata.logo,
-                    blockNum: tx.blockNum,
-                };
-            }));
+            const result = await fetchRange(fromBlock, toBlock, direction);
+            const transfers = await processTransfers(result.transfers);
 
-            if(filteredTxs.length === 0) {
+            if (transfers.length === 0) {
                 iterations++;
+                currentBatchSize *= 2;
             } else {
                 iterations = 0;
             }
 
-            // Add filtered transactions and check if we've reached the limit
-            allTransfers.push(...filteredTxs.filter(tx => tx !== null));
+            allTransfers.push(...transfers);
+            
             if (allTransfers.length >= 100) {
-                allTransfers = allTransfers.slice(0, 100); // Ensure exactly 100 transfers
+                allTransfers = allTransfers.slice(0, 100);
                 break;
             }
 
-            currentBlock = parseInt(fromBlock, 16);
-
+            currentBlock -= currentBatchSize;
+            await sleep(baseDelay);
         }
+
+        allTransfers.sort((a, b) => parseInt(b.blockNum, 16) - parseInt(a.blockNum, 16));
 
         const addresses = allTransfers.map(tx => tx.tokenAddress);
         const tokenPrices = await fetchTokenPrices(addresses);
@@ -598,6 +650,7 @@ async function backwardTokenTransfers(settings, address, startBlock) {
             tx.tokenPrice = tokenPrices[address] ? tokenPrices[address].usd : 0;
         });
 
+        cache.set(cacheKey, allTransfers);
         return allTransfers;
     };
 
@@ -615,6 +668,7 @@ async function backwardTokenTransfers(settings, address, startBlock) {
 }
 
 
+
 /** @notice address value is passed here to fetch all to and from transfer of tokens from that address
  * @dev calls the tokenTransfers function for fetching transfers from multiple chains
  * @param req -> req.body.address == the address passed
@@ -622,7 +676,8 @@ async function backwardTokenTransfers(settings, address, startBlock) {
 app.post('/token-transfers', async (req, res) => {
     const address = req.body.address;
     const blockNum = req.body.blockNum || '0x0';
-    const isFrom = req.body.bool !== undefined ? req.body.bool : true;
+    const isFrom = req.body.isOutgoing !== undefined ? req.body.isOutgoing : true;
+    const chain = req.body.chain;
     const chains = {
         eth: settingsEthereum,
         arb: settingsArbitrum,
@@ -634,15 +689,21 @@ app.post('/token-transfers', async (req, res) => {
     const allToTransfers = [];
 
     try {
+        let selectedChains;
+        if (chain && chains[chain]) {
+            selectedChains = { [chain]: chains[chain] };
+        } else {
+            selectedChains = chains;
+        }
         // const allTransfers = [];
         if(isFrom) {
-            const allTransfers = await Promise.all(Object.values(chains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
+            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
             allTransfers.forEach(transfers => {
                 allFromTransfers.push(...transfers.fromTransfers);
                 allToTransfers.push(...transfers.toTransfers);
             });
         } else {
-            const allTransfers = await Promise.all(Object.values(chains).map(chain => backwardTokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
+            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => backwardTokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
             allTransfers.forEach(transfers => {
                 allFromTransfers.push(...transfers.fromTransfers);
                 allToTransfers.push(...transfers.toTransfers);
