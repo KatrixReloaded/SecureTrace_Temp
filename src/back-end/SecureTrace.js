@@ -380,7 +380,7 @@ app.post('/fetch-address-details', async (req, res) => {
  * @param settings -> alchemy settings for different chains
  * @param address -> the address value for which the transfers need to be checked
  */
-async function tokenTransfers(settings, address, blockNum) {
+async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, tokenList) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
     const metadata = await fetchTokenData();
@@ -388,27 +388,26 @@ async function tokenTransfers(settings, address, blockNum) {
     const fetchTransfers = async (direction) => {
         let transfers = {};
 
-        if(direction === 'from') {
-            transfers = await alchemy.core.getAssetTransfers({
-                fromBlock: blockNum,
-                toBlock: 'latest',
-                fromAddress: address,
-                category: ['erc20', 'external'],
-                withMetadata: true,
-                excludeZeroValue: true,
-                maxCount: 100,
-            });
+        const params = {
+            fromBlock: fromBlockNum,
+            toBlock: toBlockNum,
+            category: ['erc20', 'external'],
+            withMetadata: true,
+            excludeZeroValue: true,
+            maxCount: 100,
+        };
+
+        if (direction === 'from') {
+            params.fromAddress = address;
         } else {
-            transfers = await alchemy.core.getAssetTransfers({
-                fromBlock: blockNum,
-                toBlock: 'latest',
-                toAddress: address,
-                category: ['erc20', 'external'],
-                withMetadata: true,
-                excludeZeroValue: true,
-                maxCount: 100,
-            });
+            params.toAddress = address;
         }
+
+        if (tokenList !== null) {
+            params.contractAddresses = tokenList;
+        }
+
+        transfers = await alchemy.core.getAssetTransfers(params);
 
         let filteredTxs = transfers.transfers.filter(tx => {
             if (tx.category === 'erc20') {
@@ -504,7 +503,7 @@ async function tokenTransfers(settings, address, blockNum) {
 const metadataCache = new Map();
 const validTokenSet = new Set();
 
-async function backwardTokenTransfers(settings, address, startBlock) {
+async function backwardTokenTransfers(settings, address, startBlock, tokenList) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
     const metadata = await fetchTokenData();
@@ -578,7 +577,7 @@ async function backwardTokenTransfers(settings, address, startBlock) {
                 return await new Promise((resolve, reject) => {
                     semaphore.take(async () => {
                         try {
-                            const result = await alchemy.core.getAssetTransfers({
+                            const params = {
                                 fromBlock,
                                 toBlock,
                                 [direction === 'from' ? 'fromAddress' : 'toAddress']: address,
@@ -586,7 +585,13 @@ async function backwardTokenTransfers(settings, address, startBlock) {
                                 withMetadata: true,
                                 excludeZeroValue: true,
                                 maxCount: 100,
-                            });
+                            };
+
+                            if (tokenList !== null) {
+                                params.contractAddresses = tokenList;
+                            }
+
+                            const result = await alchemy.core.getAssetTransfers(params);
                             resolve(result);
                         } catch (error) {
                             reject(error);
@@ -675,8 +680,10 @@ async function backwardTokenTransfers(settings, address, startBlock) {
  */
 app.post('/token-transfers', async (req, res) => {
     const address = req.body.address;
-    const blockNum = req.body.blockNum || '0x0';
+    const startBlockNum = req.body.startBlockNum || '0x0';
+    const endBlockNum = req.body.endBlockNum || 'latest';
     const isFrom = req.body.isOutgoing !== undefined ? req.body.isOutgoing : true;
+    const tokenList = req.body.tokenList || null;
     const chain = req.body.chain;
     const chains = {
         eth: settingsEthereum,
@@ -697,13 +704,13 @@ app.post('/token-transfers', async (req, res) => {
         }
         // const allTransfers = [];
         if(isFrom) {
-            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
+            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, startBlockNum, endBlockNum, tokenList)));
             allTransfers.forEach(transfers => {
                 allFromTransfers.push(...transfers.fromTransfers);
                 allToTransfers.push(...transfers.toTransfers);
             });
         } else {
-            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => backwardTokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum)));
+            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => backwardTokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum, tokenList)));
             allTransfers.forEach(transfers => {
                 allFromTransfers.push(...transfers.fromTransfers);
                 allToTransfers.push(...transfers.toTransfers);
