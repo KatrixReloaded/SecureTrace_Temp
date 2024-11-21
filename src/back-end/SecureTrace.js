@@ -672,6 +672,15 @@ async function backwardTokenTransfers(settings, address, startBlock, tokenList) 
     }
 }
 
+const dateToBlockNum = async (date, settings) => {
+    const alchemy = new Alchemy(settings);
+    
+    const timestamp = Math.floor(date.getTime() / 1000);
+    const block = await alchemy.core.getBlockByTimestamp(timestamp);
+    
+    return block.number;
+}
+
 
 
 /** @notice address value is passed here to fetch all to and from transfer of tokens from that address
@@ -680,17 +689,18 @@ async function backwardTokenTransfers(settings, address, startBlock, tokenList) 
  */
 app.post('/token-transfers', async (req, res) => {
     const address = req.body.address;
-    const startBlockNum = req.body.startBlockNum || '0x0';
-    const endBlockNum = req.body.endBlockNum || 'latest';
+    const blockNum = req.body.blockNum ?? '0x0';
     const isFrom = req.body.isOutgoing !== undefined ? req.body.isOutgoing : true;
-    const tokenList = req.body.tokenList || null;
+    const tokenList = req.body.tokenList ?? null;
     const chain = req.body.chain;
+    const startDate = req.body.startDate ?? null;
+    const endDate = req.body.endDate ?? null;
+    
     const chains = {
         eth: settingsEthereum,
         arb: settingsArbitrum,
         opt: settingsOptimism,
         pol: settingsPolygon,
-        // zk: settingsZksync,
     };
     const allFromTransfers = [];
     const allToTransfers = [];
@@ -702,15 +712,24 @@ app.post('/token-transfers', async (req, res) => {
         } else {
             selectedChains = chains;
         }
-        // const allTransfers = [];
         if(isFrom) {
-            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => tokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, startBlockNum, endBlockNum, tokenList)));
+            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => tokenTransfers(
+                {apiKey: chain.apiKey, network: chain.network}, 
+                address, 
+                startDate !== null ? dateToBlockNum(new Date(startDate, chain)) : blockNum, 
+                endDate !== null ? dateToBlockNum(new Date(startDate, chain)) : 'latest', 
+                tokenList
+            )));
             allTransfers.forEach(transfers => {
                 allFromTransfers.push(...transfers.fromTransfers);
                 allToTransfers.push(...transfers.toTransfers);
             });
         } else {
-            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => backwardTokenTransfers({apiKey: chain.apiKey, network: chain.network}, address, blockNum, tokenList)));
+            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => backwardTokenTransfers(
+                {apiKey: chain.apiKey, network: chain.network}, 
+                address, 
+                blockNum, 
+                tokenList)));
             allTransfers.forEach(transfers => {
                 allFromTransfers.push(...transfers.fromTransfers);
                 allToTransfers.push(...transfers.toTransfers);
