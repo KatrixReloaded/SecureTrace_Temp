@@ -384,6 +384,7 @@ async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, token
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
     const metadata = await fetchTokenData();
+    console.log("Params: ", fromBlockNum, toBlockNum, tokenList);
 
     const fetchTransfers = async (direction) => {
         let transfers = {};
@@ -676,10 +677,46 @@ const dateToBlockNum = async (date, settings) => {
     const alchemy = new Alchemy(settings);
     
     const timestamp = Math.floor(date.getTime() / 1000);
-    const block = await alchemy.core.getBlockByTimestamp(timestamp);
-    
-    return block.number;
-}
+    console.log("Timestamp: ", timestamp);
+
+    const getBlockNumberByTimestamp = async (timestamp) => {
+        let low = 0;
+        let high = await alchemy.core.getBlockNumber();
+        let closestBlock = null;
+        console.log(`Starting binary search between blocks ${low} and ${high}`);
+
+        while (low <= high) {
+            const mid = Math.floor((low + high) / 2);
+            const block = await alchemy.core.getBlock(mid);
+            console.log(`Checking block ${mid} with timestamp ${block.timestamp}`);
+
+            if (block.timestamp === timestamp) {
+                console.log(`Exact match found at block ${mid}`);
+                return block;
+            } else if (block.timestamp < timestamp) {
+                low = mid + 1;
+                closestBlock = block;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        console.log(`Closest block found: ${closestBlock.number} with timestamp ${closestBlock.timestamp}`);
+        return closestBlock;
+    };
+
+    try {
+        const block = await getBlockNumberByTimestamp(timestamp);
+        if (!block) {
+            throw new Error('No block found');
+        }
+        console.log("Block Number: ", block.number);
+        return `0x${block.number.toString(16)}`;
+    } catch (error) {
+        console.error('Error finding block:', error);
+        return '0x0';
+    }
+};
 
 
 
@@ -693,8 +730,8 @@ app.post('/token-transfers', async (req, res) => {
     const isFrom = req.body.isOutgoing !== undefined ? req.body.isOutgoing : true;
     const tokenList = req.body.tokenList ?? null;
     const chain = req.body.chain;
-    const startDate = req.body.startDate ?? null;
-    const endDate = req.body.endDate ?? null;
+    let startDate = req.body.startDate ?? null;
+    let endDate = req.body.endDate ?? null;
     
     const chains = {
         eth: settingsEthereum,
@@ -712,30 +749,52 @@ app.post('/token-transfers', async (req, res) => {
         } else {
             selectedChains = chains;
         }
-        if(isFrom) {
-            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => tokenTransfers(
-                {apiKey: chain.apiKey, network: chain.network}, 
-                address, 
-                startDate !== null ? dateToBlockNum(new Date(startDate, chain)) : blockNum, 
-                endDate !== null ? dateToBlockNum(new Date(startDate, chain)) : 'latest', 
-                tokenList
-            )));
+
+        const dateToBlockNumForChain = async (date, chainSettings) => {
+            return await dateToBlockNum(date, chainSettings);
+        };
+
+        if (isFrom) {
+            const allTransfers = await Promise.all(Object.entries(selectedChains).map(async ([chainName, chainSettings]) => {
+                let fromBlockNum = blockNum;
+                let toBlockNum = 'latest';
+
+                if (startDate !== null) {
+                    console.log(`Start Date for ${chainName}: `, startDate.toString());
+                    fromBlockNum = await dateToBlockNumForChain(new Date(startDate.toString()), chainSettings);
+                }
+
+                if (endDate !== null) {
+                    console.log(`End Date for ${chainName}: `, endDate.toString());
+                    toBlockNum = await dateToBlockNumForChain(new Date(endDate.toString()), chainSettings);
+                }
+
+                return tokenTransfers(
+                    { apiKey: chainSettings.apiKey, network: chainSettings.network },
+                    address,
+                    fromBlockNum !== null ? fromBlockNum : blockNum,
+                    toBlockNum !== null ? toBlockNum : 'latest',
+                    tokenList
+                );
+            }));
+
             allTransfers.forEach(transfers => {
                 allFromTransfers.push(...transfers.fromTransfers);
                 allToTransfers.push(...transfers.toTransfers);
             });
         } else {
             const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => backwardTokenTransfers(
-                {apiKey: chain.apiKey, network: chain.network}, 
-                address, 
-                blockNum, 
-                tokenList)));
+                { apiKey: chain.apiKey, network: chain.network },
+                address,
+                blockNum,
+                tokenList
+            )));
             allTransfers.forEach(transfers => {
                 allFromTransfers.push(...transfers.fromTransfers);
                 allToTransfers.push(...transfers.toTransfers);
             });
         }
-        
+
         res.json({
             from: allFromTransfers,
             to: allToTransfers,
@@ -743,6 +802,11 @@ app.post('/token-transfers', async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: 'An error occurred while fetching token transfers' });
     }
+});
+
+app.post('/fetch-tokens', async (req, res) => {
+    const tokenData = await fetchTokenData();
+        res.json({ tokens: tokenData });
 });
 
 
