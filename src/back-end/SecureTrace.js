@@ -882,11 +882,10 @@ app.post('/fetch-tokens', async (req, res) => {
  * @param providerUrl -> the chain the tx hash belongs to
  * @param settings -> the chain's settings for alchemy-sdk
  */
-async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
+async function fetchTokenTransfersFromTx(txHash, settings) {
     try {
         const validTokenAddresses = await fetchTokenList();
         metadata = await fetchTokenData();
-        const provider = new ethers.JsonRpcProvider(`${providerUrl}`);
         const alchemy = new Alchemy(settings);
         const receipt = await alchemy.core.getTransactionReceipt(txHash);
 
@@ -994,7 +993,7 @@ app.post('/fetch-transaction-details', async (req, res) => {
 
     try {
         console.log("Fetching internal transfers for Ethereum");
-        let ethTransfers = await fetchTokenTransfersFromTx(txhash, `https://eth-mainnet.g.alchemy.com/v2/${settingsEthereum.apiKey}`, settingsEthereum);
+        let ethTransfers = await fetchTokenTransfersFromTx(txhash, settingsEthereum);
         if(ethTransfers !== 0) {
             ethTransfers = addChainNameToTransfers(ethTransfers, 'ethereum');
             res.json({ transfers: ethTransfers, });
@@ -1002,7 +1001,7 @@ app.post('/fetch-transaction-details', async (req, res) => {
         }
 
         console.log("Fetching internal transfers for Arbitrum");
-        let arbTransfers = await fetchTokenTransfersFromTx(txhash, `https://arb-mainnet.g.alchemy.com/v2/${settingsArbitrum.apiKey}`, settingsArbitrum);
+        let arbTransfers = await fetchTokenTransfersFromTx(txhash, settingsArbitrum);
         if(arbTransfers !== 0) {
             arbTransfers = addChainNameToTransfers(arbTransfers, 'arbitrum');
             res.json({ transfers: arbTransfers, });
@@ -1010,7 +1009,7 @@ app.post('/fetch-transaction-details', async (req, res) => {
         }
 
         console.log("Fetching internal transfers for Polygon");
-        let polTransfers = await fetchTokenTransfersFromTx(txhash, `https://polygon-mainnet.g.alchemy.com/v2/${settingsPolygon.apiKey}`, settingsPolygon);
+        let polTransfers = await fetchTokenTransfersFromTx(txhash, settingsPolygon);
         if(polTransfers !== 0) {
             polTransfers = addChainNameToTransfers(polTransfers, 'polygon');
             res.json({ transfers: polTransfers, });
@@ -1018,7 +1017,7 @@ app.post('/fetch-transaction-details', async (req, res) => {
         }
 
         console.log("Fetching internal transfers for Optimism");
-        let optTransfers = await fetchTokenTransfersFromTx(txhash, `https://opt-mainnet.g.alchemy.com/v2/${settingsOptimism.apiKey}`, settingsOptimism);
+        let optTransfers = await fetchTokenTransfersFromTx(txhash, settingsOptimism);
         if(optTransfers !== 0) {
             optTransfers = addChainNameToTransfers(optTransfers, 'optimism');
             res.json({ transfers: optTransfers, });
@@ -1026,7 +1025,7 @@ app.post('/fetch-transaction-details', async (req, res) => {
         }
 
         console.log("Fetching internal transfers for zkSync");
-        let zkTransfers = await fetchTokenTransfersFromTx(txhash, `https://zksync-mainnet.g.alchemy.com/v2/${settingsZksync.apiKey}`, settingsZksync);
+        let zkTransfers = await fetchTokenTransfersFromTx(txhash, settingsZksync);
         if(zkTransfers !== 0) {
             zkTransfers = addChainNameToTransfers(zkTransfers, 'zksync');
             res.json({ transfers: zkTransfers, });
@@ -1034,7 +1033,7 @@ app.post('/fetch-transaction-details', async (req, res) => {
         }
 
         console.log("Fetching internal transfers for Linea");
-        let lineaTransfers = await fetchTokenTransfersFromTx(txhash, `https://linea-mainnet.g.alchemy.com/v2/${settingsLinea.apiKey}`, settingsLinea);
+        let lineaTransfers = await fetchTokenTransfersFromTx(txhash, settingsLinea);
         if(lineaTransfers !== 0) {
             lineaTransfers = addChainNameToTransfers(lineaTransfers, 'linea');
             res.json({ transfers: lineaTransfers, });
@@ -1042,7 +1041,7 @@ app.post('/fetch-transaction-details', async (req, res) => {
         }
 
         console.log("Fetching internal transfers for Blast");
-        let blastTransfers = await fetchTokenTransfersFromTx(txhash, `https://blast-mainnet.g.alchemy.com/v2/${settingsBlast.apiKey}`, settingsBlast);
+        let blastTransfers = await fetchTokenTransfersFromTx(txhash, settingsBlast);
         if(blastTransfers !== 0) {
             blastTransfers = addChainNameToTransfers(blastTransfers, 'blast');
             res.json({ transfers: blastTransfers, });
