@@ -270,6 +270,27 @@ async function fetchCoinGeckoCoins() {
     return coinMap;
 }
 
+async function fetchNativeTokenPrices() {
+    const cacheKey = 'nativeTokenPrices';
+    const cachedPrices = cache.get(cacheKey);
+
+    if (cachedPrices) {
+        console.log('Returning cached prices');
+        return cachedPrices;
+    }
+
+    try {
+        const priceResponse = await axios.get(`https://coins.llama.fi/prices/current/coingecko:ethereum,coingecko:matic-network`);
+        const prices = priceResponse.data.coins;
+        cache.set(cacheKey, prices);
+        console.log('Fetched and cached new prices');
+        return prices;
+    } catch (error) {
+        console.error('Error fetching native token prices:', error);
+        return null;
+    }
+}
+
 
 /** ----------------------------------------------------------------------------- 
 ----------------------------- PORTFOLIO TRACKER ---------------------------------
@@ -289,10 +310,12 @@ async function fetchCoinGeckoCoins() {
 async function fetchAddressDetails(settings, address) {
     const alchemy = new Alchemy(settings);
 
-    const [validTokenAddresses, metadata, balances] = await Promise.all([
+    const [validTokenAddresses, metadata, nativeTokenPrices, balances, nativeBalance] = await Promise.all([
         fetchTokenList(),
         fetchTokenData(),
+        fetchNativeTokenPrices(),
         alchemy.core.getTokenBalances(address),
+        alchemy.core.getBalance(address),
     ]);
 
     const addresses = new Set();
@@ -328,6 +351,40 @@ async function fetchAddressDetails(settings, address) {
         token.tokenPrice = tokenPrices[token.tokenAddress]?.usd || 0;
     });
 
+    // Add native token balance to the token details
+    let nativeTokenDetail;
+    switch (settings.network) {
+        case Network.ETH_MAINNET:
+        case Network.ARB_MAINNET:
+        case Network.OPT_MAINNET:
+        case Network.BLAST_MAINNET:
+            nativeTokenDetail = {
+                tokenBalance: ethers.formatUnits(nativeBalance.toString(), 18), // Assuming 18 decimals for native token
+                tokenName: 'Ethereum',
+                tokenSymbol: 'ETH',
+                tokenAddress: null,
+                tokenPrice: nativeTokenPrices['coingecko:ethereum'].price,
+                logo: 'https://assets.coingecko.com/coins/images/279/large/ethereum.png',
+            };
+            break;
+        case Network.MATIC_MAINNET:
+            nativeTokenDetail = {
+                tokenBalance: ethers.formatUnits(nativeBalance.toString(), 18), // Assuming 18 decimals for native token
+                tokenName: 'Polygon',
+                tokenSymbol: 'MATIC',
+                tokenAddress: null,
+                tokenPrice: nativeTokenPrices['coingecko:matic-network'].price,
+                logo: 'https://assets.coingecko.com/coins/images/4713/large/matic-token-icon.png',
+            };
+            break;
+        default:
+            nativeTokenDetail = null;
+    }
+
+    if (nativeTokenDetail) {
+        resolvedTokenDetails.push(nativeTokenDetail);
+    }
+
     return resolvedTokenDetails;
 }
 
@@ -340,8 +397,6 @@ app.post('/fetch-address-details', async (req, res) => {
         arbitrum: settingsArbitrum,
         optimism: settingsOptimism,
         polygon: settingsPolygon,
-        // zk: settingsZksync,
-        // avax: settingsAvalanche,
         blast: settingsBlast,
     };
 
@@ -380,16 +435,17 @@ app.post('/fetch-address-details', async (req, res) => {
  * @param settings -> alchemy settings for different chains
  * @param address -> the address value for which the transfers need to be checked
  */
-async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, tokenList) {
+async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, tokenList, chainKey) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
     const metadata = await fetchTokenData();
     console.log("Params: ", fromBlockNum, toBlockNum, tokenList);
+    const priceData = await fetchNativeTokenPrices();
 
     const fetchTransfers = async (direction) => {
         let transfers = {};
 
-        const params = {
+        let params = {
             fromBlock: fromBlockNum,
             toBlock: toBlockNum,
             category: ['erc20', 'external'],
@@ -423,21 +479,23 @@ async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, token
         console.log("Filtered Txs");
         filteredTxs = await Promise.all(filteredTxs.map(async (tx) => {
             let contractAddress = tx.rawContract?.address;
-            // if(!contractAddress && tx.category === 'external') {
-            //     return {
-            //         txHash: tx.hash,
-            //         from: tx.from,
-            //         to: tx.to,
-            //         value: tx.value,
-            //         decimals: tx.rawContract ? tx.rawContract.decimals : 18,
-            //         asset: tx.asset,
-            //         tokenAddress: null,
-            //         timestamp: tx.metadata.blockTimestamp,
-            //         tokenPrice: null,
-            //         tokenName: tx.asset === 'MATIC' ? "Polygon" : "Ethereum",
-            //     };
-            // } else 
-            if (!contractAddress) {
+            if(!contractAddress && tx.category === 'external' && tokenList === null) {
+                return {
+                    txHash: tx.hash,
+                    from: tx.from,
+                    to: tx.to,
+                    value: tx.value,
+                    decimals: tx.rawContract ? tx.rawContract.decimals : 18,
+                    symbol: tx.asset,
+                    tokenAddress: null,
+                    timestamp: tx.metadata.blockTimestamp,
+                    tokenPrice: tx.asset === 'MATIC' ? priceData['coingecko:matic-network'].price : priceData['coingecko:ethereum'].price,
+                    tokenName: tx.asset === 'MATIC' ? "Polygon" : "Ethereum",
+                    blockNum: tx.blockNum,
+                    chain: chainKey,
+                    logo: tx.asset === 'MATIC' ? 'https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png' : 'https://assets.coingecko.com/coins/images/279/small/ethereum.png',
+                };
+            } else if (!contractAddress) {
                 return null;
             }
 
@@ -459,7 +517,7 @@ async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, token
                 timestamp: tx.metadata.blockTimestamp,
                 tokenPrice: null,
                 tokenName: tokenMetadata.name,
-                chain: tokenMetadata.chain,
+                chain: chainKey,
                 logo: tokenMetadata.logo,
                 blockNum: tx.blockNum
             };
@@ -472,6 +530,10 @@ async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, token
         const tokenPrices = await fetchTokenPrices(addresses);
         filteredTxs.forEach(tx => {
             const address = tx.tokenAddress;
+            if(address === null) {
+                console.log(tx.tokenName, tx.value, tx.tokenPrice, "USD");
+                return;
+            }
             tx.tokenPrice = tokenPrices[address] ? tokenPrices[address].usd : 0;
             console.log(tx.tokenName, tx.value, tx.tokenPrice, "USD");
         });
@@ -504,10 +566,11 @@ async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, token
 const metadataCache = new Map();
 const validTokenSet = new Set();
 
-async function backwardTokenTransfers(settings, address, startBlock, tokenList) {
+async function backwardTokenTransfers(settings, address, startBlock, tokenList, chainKey) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
     const metadata = await fetchTokenData();
+    const priceData = await fetchNativeTokenPrices();
     
     const initialBatchSize = 1000;
     const maxRetries = 3;
@@ -557,13 +620,36 @@ async function backwardTokenTransfers(settings, address, startBlock, tokenList) 
                         timestamp: tx.metadata.blockTimestamp,
                         tokenPrice: null,
                         tokenName: tokenMetadata.name,
-                        chain: tokenMetadata.chain,
+                        chain: chainKey,
                         logo: tokenMetadata.logo,
                         blockNum: tx.blockNum,
                     });
                 });
             }
         }));
+
+        transfers.forEach(tx => {
+            if (tx.category === 'external') {
+                let contractAddress = tx.rawContract?.address;
+                if (!contractAddress && tokenList === null) {
+                    processedTransfers.push({
+                        txHash: tx.hash,
+                        from: tx.from,
+                        to: tx.to,
+                        value: tx.value,
+                        decimals: tx.rawContract ? tx.rawContract.decimals : 18,
+                        symbol: tx.asset,
+                        tokenAddress: null,
+                        timestamp: tx.metadata.blockTimestamp,
+                        tokenPrice: tx.asset === 'MATIC' ? priceData['coingecko:matic-network'].price : priceData['coingecko:ethereum'].price,
+                        tokenName: tx.asset === 'MATIC' ? "Polygon" : "Ethereum",
+                        blockNum: tx.blockNum,
+                        chain: chainKey,
+                        logo: tx.asset === 'MATIC' ? 'https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png' : 'https://assets.coingecko.com/coins/images/279/small/ethereum.png',
+                    });
+                }
+            }
+        });
 
         return processedTransfers;
     };
@@ -578,7 +664,7 @@ async function backwardTokenTransfers(settings, address, startBlock, tokenList) 
                 return await new Promise((resolve, reject) => {
                     semaphore.take(async () => {
                         try {
-                            const params = {
+                            let params = {
                                 fromBlock,
                                 toBlock,
                                 [direction === 'from' ? 'fromAddress' : 'toAddress']: address,
@@ -734,10 +820,10 @@ app.post('/token-transfers', async (req, res) => {
     let endDate = req.body.endDate ?? null;
     
     const chains = {
-        eth: settingsEthereum,
-        arb: settingsArbitrum,
-        opt: settingsOptimism,
-        pol: settingsPolygon,
+        ethereum: settingsEthereum,
+        arbitrum: settingsArbitrum,
+        optimism: settingsOptimism,
+        polygon: settingsPolygon,
     };
     const allFromTransfers = [];
     const allToTransfers = [];
@@ -774,7 +860,8 @@ app.post('/token-transfers', async (req, res) => {
                     address,
                     fromBlockNum !== null ? fromBlockNum : blockNum,
                     toBlockNum !== null ? toBlockNum : 'latest',
-                    tokenList
+                    tokenList,
+                    chainName
                 );
             }));
 
@@ -783,11 +870,12 @@ app.post('/token-transfers', async (req, res) => {
                 allToTransfers.push(...transfers.toTransfers);
             });
         } else {
-            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => backwardTokenTransfers(
-                { apiKey: chain.apiKey, network: chain.network },
+            const allTransfers = await Promise.all(Object.entries(selectedChains).map(([chainName, chainSettings]) => backwardTokenTransfers(
+                { apiKey: chainSettings.apiKey, network: chainSettings.network },
                 address,
                 blockNum,
-                tokenList
+                tokenList,
+                chainName
             )));
             allTransfers.forEach(transfers => {
                 allFromTransfers.push(...transfers.fromTransfers);
@@ -821,13 +909,13 @@ app.post('/fetch-tokens', async (req, res) => {
  * @param providerUrl -> the chain the tx hash belongs to
  * @param settings -> the chain's settings for alchemy-sdk
  */
-async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
+async function fetchTokenTransfersFromTx(txHash, settings) {
     try {
         const validTokenAddresses = await fetchTokenList();
         metadata = await fetchTokenData();
-        const provider = new ethers.JsonRpcProvider(`${providerUrl}`);
         const alchemy = new Alchemy(settings);
         const receipt = await alchemy.core.getTransactionReceipt(txHash);
+        const nativeTokenPrices = await fetchNativeTokenPrices();
 
         if (!receipt) {
             console.log('Transaction not found!');
@@ -849,7 +937,7 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
                 tokenName: "Polygon",
                 tokenSymbol: "MATIC",
                 tokenAddress: null,
-                tokenPrice: null,
+                tokenPrice: nativeTokenPrices['coingecko:matic-network'].price,
                 blockNum: blockNumHex
             } : {
                 from: tx.from,
@@ -858,7 +946,7 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
                 tokenName: "Ethereum",
                 tokenSymbol: "ETH",
                 tokenAddress: null,
-                tokenPrice: null,
+                tokenPrice: nativeTokenPrices['coingecko:ethereum'].price,
                 blockNum: blockNumHex
             };
             
@@ -880,41 +968,26 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
             const from = ethers.getAddress(log.topics[1].slice(26));
             const to = ethers.getAddress(log.topics[2].slice(26));
             const value = BigInt(log.data);
-            // const contract = new ethers.Contract(log.address, ERC20_ABI, provider);
-            // let name = "";
-            // let symbol = "";
-            // let decimals = 0;
-            // try {
-            //     name = await contract.name();
-            //     symbol = await contract.symbol();
-            //     decimals = await contract.decimals();
-            // } catch (error) {
-            //     console.error(`Error fetching token details for ${log.address}:`, error);
-            // }
+
             const tokenMetadata = metadata.find(m => m.address === log.address.toLowerCase());
             if (!tokenMetadata) {
                 return {};
             }
             
-            // const tokenId = tokenNameToId.find(t => t.name.toLowerCase() === name.toLowerCase());
-            // if(tokenId) {
-                const tokenTransfer = {
-                    from,
-                    to,
-                    value: ethers.formatUnits(value, tokenMetadata.decimals),
-                    tokenAddress: log.address.toLowerCase(),
-                    tokenName: tokenMetadata.name,
-                    tokenSymbol: tokenMetadata.symbol,
-                    logoURL: tokenMetadata.logo,
-                    tokenPrice: 0,
-                    blockNum: blockNumHex
-                }
-                tokenAddresses.push(log.address.toLowerCase());
+            const tokenTransfer = {
+                from,
+                to,
+                value: ethers.formatUnits(value, tokenMetadata.decimals),
+                tokenAddress: log.address.toLowerCase(),
+                tokenName: tokenMetadata.name,
+                tokenSymbol: tokenMetadata.symbol,
+                logoURL: tokenMetadata.logo,
+                tokenPrice: 0,
+                blockNum: blockNumHex
+            }
+            tokenAddresses.push(log.address.toLowerCase());
 
-                return tokenTransfer;
-            // } else {
-            //     return {};
-            // }
+            return tokenTransfer;
         }));
 
         const filteredTokenTransfers = Object.fromEntries(
@@ -925,7 +998,6 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
         Object.values(filteredTokenTransfers).forEach(transfer => {
             const tokenAddress = transfer.tokenAddress.toLowerCase();
             transfer.tokenPrice = tokenPrices[tokenAddress] ? tokenPrices[tokenAddress].usd : 0;
-            //console.log(transfer.tokenName, transfer.value, transfer.tokenSymbol, transfer.tokenPrice, "USD");
         });
         const finalTokenTransfers = Object.values(filteredTokenTransfers).filter(t => Object.keys(t).length);
 
@@ -942,52 +1014,63 @@ async function fetchTokenTransfersFromTx(txHash, providerUrl, settings) {
 app.post('/fetch-transaction-details', async (req, res) => {
     const txhash = req.body.txhash;
 
+    const addChainNameToTransfers = (transfers, chainName) => {
+        return transfers.map(transfer => ({ ...transfer, chain: chainName }));
+    };
+
     try {
         console.log("Fetching internal transfers for Ethereum");
-        const ethTransfers = await fetchTokenTransfersFromTx(txhash, `https://eth-mainnet.g.alchemy.com/v2/${settingsEthereum.apiKey}`, settingsEthereum);
+        let ethTransfers = await fetchTokenTransfersFromTx(txhash, settingsEthereum);
         if(ethTransfers !== 0) {
+            ethTransfers = addChainNameToTransfers(ethTransfers, 'ethereum');
             res.json({ transfers: ethTransfers, });
             return;
         }
 
         console.log("Fetching internal transfers for Arbitrum");
-        const arbTransfers = await fetchTokenTransfersFromTx(txhash, `https://arb-mainnet.g.alchemy.com/v2/${settingsArbitrum.apiKey}`, settingsArbitrum);
+        let arbTransfers = await fetchTokenTransfersFromTx(txhash, settingsArbitrum);
         if(arbTransfers !== 0) {
+            arbTransfers = addChainNameToTransfers(arbTransfers, 'arbitrum');
             res.json({ transfers: arbTransfers, });
             return;
         }
 
         console.log("Fetching internal transfers for Polygon");
-        const polTransfers = await fetchTokenTransfersFromTx(txhash, `https://polygon-mainnet.g.alchemy.com/v2/${settingsPolygon.apiKey}`, settingsPolygon);
+        let polTransfers = await fetchTokenTransfersFromTx(txhash, settingsPolygon);
         if(polTransfers !== 0) {
+            polTransfers = addChainNameToTransfers(polTransfers, 'polygon');
             res.json({ transfers: polTransfers, });
             return;
         }
 
         console.log("Fetching internal transfers for Optimism");
-        const optTransfers = await fetchTokenTransfersFromTx(txhash, `https://opt-mainnet.g.alchemy.com/v2/${settingsOptimism.apiKey}`, settingsOptimism);
+        let optTransfers = await fetchTokenTransfersFromTx(txhash, settingsOptimism);
         if(optTransfers !== 0) {
+            optTransfers = addChainNameToTransfers(optTransfers, 'optimism');
             res.json({ transfers: optTransfers, });
             return;
         }
 
         console.log("Fetching internal transfers for zkSync");
-        const zkTransfers = await fetchTokenTransfersFromTx(txhash, `https://zksync-mainnet.g.alchemy.com/v2/${settingsZksync.apiKey}`, settingsZksync);
+        let zkTransfers = await fetchTokenTransfersFromTx(txhash, settingsZksync);
         if(zkTransfers !== 0) {
+            zkTransfers = addChainNameToTransfers(zkTransfers, 'zksync');
             res.json({ transfers: zkTransfers, });
             return;
         }
 
         console.log("Fetching internal transfers for Linea");
-        const lineaTransfers = await fetchTokenTransfersFromTx(txhash, `https://linea-mainnet.g.alchemy.com/v2/${settingsLinea.apiKey}`, settingsLinea);
+        let lineaTransfers = await fetchTokenTransfersFromTx(txhash, settingsLinea);
         if(lineaTransfers !== 0) {
+            lineaTransfers = addChainNameToTransfers(lineaTransfers, 'linea');
             res.json({ transfers: lineaTransfers, });
             return;
         }
 
         console.log("Fetching internal transfers for Blast");
-        const blastTransfers = await fetchTokenTransfersFromTx(txhash, `https://blast-mainnet.g.alchemy.com/v2/${settingsBlast.apiKey}`, settingsBlast);
+        let blastTransfers = await fetchTokenTransfersFromTx(txhash, settingsBlast);
         if(blastTransfers !== 0) {
+            blastTransfers = addChainNameToTransfers(blastTransfers, 'blast');
             res.json({ transfers: blastTransfers, });
             return;
         }
