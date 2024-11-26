@@ -435,7 +435,7 @@ app.post('/fetch-address-details', async (req, res) => {
  * @param settings -> alchemy settings for different chains
  * @param address -> the address value for which the transfers need to be checked
  */
-async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, tokenList) {
+async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, tokenList, chainKey) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
     const metadata = await fetchTokenData();
@@ -492,6 +492,7 @@ async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, token
                     tokenPrice: tx.asset === 'MATIC' ? priceData['coingecko:matic-network'].price : priceData['coingecko:ethereum'].price,
                     tokenName: tx.asset === 'MATIC' ? "Polygon" : "Ethereum",
                     blockNum: tx.blockNum,
+                    chain: chainKey,
                     logo: tx.asset === 'MATIC' ? 'https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png' : 'https://assets.coingecko.com/coins/images/279/small/ethereum.png',
                 };
             } else if (!contractAddress) {
@@ -516,7 +517,7 @@ async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, token
                 timestamp: tx.metadata.blockTimestamp,
                 tokenPrice: null,
                 tokenName: tokenMetadata.name,
-                chain: tokenMetadata.chain,
+                chain: chainKey,
                 logo: tokenMetadata.logo,
                 blockNum: tx.blockNum
             };
@@ -565,10 +566,11 @@ async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, token
 const metadataCache = new Map();
 const validTokenSet = new Set();
 
-async function backwardTokenTransfers(settings, address, startBlock, tokenList) {
+async function backwardTokenTransfers(settings, address, startBlock, tokenList, chainKey) {
     const alchemy = new Alchemy(settings);
     const validTokenAddresses = await fetchTokenList();
     const metadata = await fetchTokenData();
+    const priceData = await fetchNativeTokenPrices();
     
     const initialBatchSize = 1000;
     const maxRetries = 3;
@@ -618,13 +620,36 @@ async function backwardTokenTransfers(settings, address, startBlock, tokenList) 
                         timestamp: tx.metadata.blockTimestamp,
                         tokenPrice: null,
                         tokenName: tokenMetadata.name,
-                        chain: tokenMetadata.chain,
+                        chain: chainKey,
                         logo: tokenMetadata.logo,
                         blockNum: tx.blockNum,
                     });
                 });
             }
         }));
+
+        transfers.forEach(tx => {
+            if (tx.category === 'external') {
+                let contractAddress = tx.rawContract?.address;
+                if (!contractAddress && tokenList === null) {
+                    processedTransfers.push({
+                        txHash: tx.hash,
+                        from: tx.from,
+                        to: tx.to,
+                        value: tx.value,
+                        decimals: tx.rawContract ? tx.rawContract.decimals : 18,
+                        symbol: tx.asset,
+                        tokenAddress: null,
+                        timestamp: tx.metadata.blockTimestamp,
+                        tokenPrice: tx.asset === 'MATIC' ? priceData['coingecko:matic-network'].price : priceData['coingecko:ethereum'].price,
+                        tokenName: tx.asset === 'MATIC' ? "Polygon" : "Ethereum",
+                        blockNum: tx.blockNum,
+                        chain: chainKey,
+                        logo: tx.asset === 'MATIC' ? 'https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png' : 'https://assets.coingecko.com/coins/images/279/small/ethereum.png',
+                    });
+                }
+            }
+        });
 
         return processedTransfers;
     };
@@ -795,10 +820,10 @@ app.post('/token-transfers', async (req, res) => {
     let endDate = req.body.endDate ?? null;
     
     const chains = {
-        eth: settingsEthereum,
-        arb: settingsArbitrum,
-        opt: settingsOptimism,
-        pol: settingsPolygon,
+        ethereum: settingsEthereum,
+        arbitrum: settingsArbitrum,
+        optimism: settingsOptimism,
+        polygon: settingsPolygon,
     };
     const allFromTransfers = [];
     const allToTransfers = [];
@@ -835,7 +860,8 @@ app.post('/token-transfers', async (req, res) => {
                     address,
                     fromBlockNum !== null ? fromBlockNum : blockNum,
                     toBlockNum !== null ? toBlockNum : 'latest',
-                    tokenList
+                    tokenList,
+                    chainName
                 );
             }));
 
@@ -844,11 +870,12 @@ app.post('/token-transfers', async (req, res) => {
                 allToTransfers.push(...transfers.toTransfers);
             });
         } else {
-            const allTransfers = await Promise.all(Object.values(selectedChains).map(chain => backwardTokenTransfers(
-                { apiKey: chain.apiKey, network: chain.network },
+            const allTransfers = await Promise.all(Object.entries(selectedChains).map(([chainName, chainSettings]) => backwardTokenTransfers(
+                { apiKey: chainSettings.apiKey, network: chainSettings.network },
                 address,
                 blockNum,
-                tokenList
+                tokenList,
+                chainName
             )));
             allTransfers.forEach(transfers => {
                 allFromTransfers.push(...transfers.fromTransfers);
@@ -888,6 +915,7 @@ async function fetchTokenTransfersFromTx(txHash, settings) {
         metadata = await fetchTokenData();
         const alchemy = new Alchemy(settings);
         const receipt = await alchemy.core.getTransactionReceipt(txHash);
+        const nativeTokenPrices = await fetchNativeTokenPrices();
 
         if (!receipt) {
             console.log('Transaction not found!');
@@ -909,7 +937,7 @@ async function fetchTokenTransfersFromTx(txHash, settings) {
                 tokenName: "Polygon",
                 tokenSymbol: "MATIC",
                 tokenAddress: null,
-                tokenPrice: null,
+                tokenPrice: nativeTokenPrices['coingecko:matic-network'].price,
                 blockNum: blockNumHex
             } : {
                 from: tx.from,
@@ -918,7 +946,7 @@ async function fetchTokenTransfersFromTx(txHash, settings) {
                 tokenName: "Ethereum",
                 tokenSymbol: "ETH",
                 tokenAddress: null,
-                tokenPrice: null,
+                tokenPrice: nativeTokenPrices['coingecko:ethereum'].price,
                 blockNum: blockNumHex
             };
             
@@ -970,7 +998,6 @@ async function fetchTokenTransfersFromTx(txHash, settings) {
         Object.values(filteredTokenTransfers).forEach(transfer => {
             const tokenAddress = transfer.tokenAddress.toLowerCase();
             transfer.tokenPrice = tokenPrices[tokenAddress] ? tokenPrices[tokenAddress].usd : 0;
-            //console.log(transfer.tokenName, transfer.value, transfer.tokenSymbol, transfer.tokenPrice, "USD");
         });
         const finalTokenTransfers = Object.values(filteredTokenTransfers).filter(t => Object.keys(t).length);
 
