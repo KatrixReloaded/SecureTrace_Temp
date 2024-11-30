@@ -1,6 +1,7 @@
 const mysql = require('mysql2/promise');
 const axios = require('axios');
 require('dotenv').config();
+const algosdk = require('algosdk');
 // const {getConnection} = require('./db');
 
 const pool = mysql.createPool({
@@ -127,4 +128,65 @@ async function fetchData() {
     }
 }
 
-fetchData();
+
+async function fetchAlgorandAssetDetails(assetId) {
+    const mainnetClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+    try {
+        const asset = await mainnetClient.lookupAssetByID(assetId).do();
+
+        // console.log('Asset Details:', asset);
+
+        const assetDetails = {
+            address: assetId,
+            name: asset.asset.params.name,
+            symbol: asset.asset.params.unitName,
+            decimals: asset.asset.params.decimals || 0,
+            chain: 'algorand',
+            logoURL: null
+        };
+
+        return assetDetails;
+    } catch (error) {
+        console.error(`Error fetching asset details for asset ID ${assetId}:`, error);
+        return null;
+    }
+}
+
+async function algoAssetIds() {
+    const connection = await pool.getConnection();
+    try {
+        const query = 'INSERT INTO TempTokens (address, name, symbol, decimals, chain, logoURL) VALUES (?, ?, ?, ?, ?, ?)';
+        const assetIds = [
+            2751733,
+            287867876, 
+            137020565,
+            657291910,
+            887407002,
+            312769,
+            1138500612,
+            1237529510,
+            283820866,
+            1821328783,
+            27165954
+        ];
+        const assetDetailsArray = await Promise.all(assetIds.map(async (assetId) => {
+            const assetDetails = await fetchAlgorandAssetDetails(assetId);
+            return assetDetails;
+        }));
+
+        for (const asset of assetDetailsArray) {
+            await connection.execute(query, [asset.address, asset.name, asset.symbol, asset.decimals, asset.chain, asset.logoURL]);
+        }
+
+        console.log('Asset Details Array:', assetDetailsArray);
+        return assetDetailsArray;
+    } catch (error) {
+        console.error('Error fetching asset details:', error);
+        return [];
+    } finally {
+        connection.release();
+    }
+}
+
+fetchPrices();
