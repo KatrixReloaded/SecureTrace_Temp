@@ -280,6 +280,27 @@ async function fetchAlgorandTokenList() {
     }
 }
 
+async function fetchNativeTokenPrices() {
+    const cacheKey = 'nativeTokenPrices';
+    const cachedPrices = cache.get(cacheKey);
+
+    if (cachedPrices) {
+        console.log('Returning cached prices');
+        return cachedPrices;
+    }
+
+    try {
+        const priceResponse = await axios.get(`https://coins.llama.fi/prices/current/coingecko:ethereum,coingecko:matic-network,coingecko:algorand`);
+        const prices = priceResponse.data.coins;
+        cache.set(cacheKey, prices);
+        console.log('Fetched and cached new prices');
+        return prices;
+    } catch (error) {
+        console.error('Error fetching native token prices:', error);
+        return null;
+    }
+}
+
 
 /** ----------------------------------------------------------------------------- 
 ----------------------------- PORTFOLIO TRACKER ---------------------------------
@@ -1263,6 +1284,7 @@ app.post('/top-tokens', async (req, res) => {
 async function fetchAlgorandAddressDetails(address) {
     const mainnetClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
     algoTokenList = await fetchAlgorandTokenList();
+    const nativeTokenPrices = await fetchNativeTokenPrices();
 
     try {
         if (!algosdk.isValidAddress(address)) {
@@ -1328,7 +1350,7 @@ async function fetchAlgorandAddressDetails(address) {
                 tokenName: 'Algorand',
                 tokenSymbol: 'ALGO',
                 tokenDecimals: 6,
-                tokenPrice: 0,
+                tokenPrice: (nativeTokenPrices['coingecko:algorand'].price).toString(),
             },
             ...validAssets
         ];
