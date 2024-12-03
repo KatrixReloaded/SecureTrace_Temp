@@ -88,6 +88,7 @@ app.post('/', (req, res) => {
 
 let validTokenAddresses;
 let tokenNameToId;
+let algoTokenList;
 
 
 /** ----------------------------------------------------------------------------- 
@@ -256,38 +257,26 @@ async function fetchTokenData() {
  * @notice fetches the token list from CoinGecko API, called again for Algorand
  * @dev maps the token names to their respective IDs
  */
-async function fetchCoinGeckoCoins() {
-    const url = 'https://api.coingecko.com/api/v3/coins/list';
-    const response = await fetch(url);
-    const data = await response.json();
-    const coinMap = {};
-    
-    data.forEach(coin => {
-        coinMap[coin.name.toLowerCase()] = coin.id;
-        coinMap[coin.symbol.toLowerCase()] = coin.id;
-    });
-    
-    return coinMap;
-}
-
-async function fetchNativeTokenPrices() {
-    const cacheKey = 'nativeTokenPrices';
-    const cachedPrices = cache.get(cacheKey);
-
-    if (cachedPrices) {
-        console.log('Returning cached prices');
-        return cachedPrices;
-    }
+async function fetchAlgorandTokenList() {
+    const connection = await pool.getConnection();
 
     try {
-        const priceResponse = await axios.get(`https://coins.llama.fi/prices/current/coingecko:ethereum,coingecko:matic-network`);
-        const prices = priceResponse.data.coins;
-        cache.set(cacheKey, prices);
-        console.log('Fetched and cached new prices');
-        return prices;
-    } catch (error) {
-        console.error('Error fetching native token prices:', error);
-        return null;
+        const [rows] = await connection.execute('SELECT chain, address, name, symbol, decimals, price, logoURL FROM TempTokens WHERE chain = "algorand"');
+        algoTokenList = rows.map(token => ({
+            chain: token.chain,
+            address: token.address,
+            name: token.name ? token.name : null,
+            symbol: token.symbol,
+            decimals: token.decimals ? token.decimals : 18,
+            price: token.price ? token.price : 0,
+            logo: token.logoURL ? token.logoURL : null,
+        }));
+        return algoTokenList;
+    } catch(error) {
+        console.error('Error fetching algorand token list from database:', error);
+        return [];
+    } finally {
+        connection.release();
     }
 }
 
@@ -1273,6 +1262,7 @@ app.post('/top-tokens', async (req, res) => {
  */
 async function fetchAlgorandAddressDetails(address) {
     const mainnetClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+    algoTokenList = await fetchAlgorandTokenList();
 
     try {
         if (!algosdk.isValidAddress(address)) {
@@ -1281,57 +1271,47 @@ async function fetchAlgorandAddressDetails(address) {
 
         const accountInfo = await mainnetClient.lookupAccountByID(address).do();
 
-        const algoBalance = accountInfo.account.amount / BigInt(1e6);
+        const algoBalance = (BigInt(accountInfo.account.amount) / BigInt(1e6)).toString();
 
         const assetBalances = accountInfo.account.assets || [];
         console.log('Asset Balances:', assetBalances);
-
-        const coinGeckoCoins = await fetchCoinGeckoCoins();
 
         const assetDetails = await Promise.all(
             assetBalances.map(async (asset) => {
                 try {
                     console.log('Processing Asset:', asset);
+                    const assetID = (asset.assetId).toString();
 
-                    if (asset.assetId === undefined) {
+                    if (assetID === undefined) {
                         console.warn('Asset ID is undefined or missing, skipping asset.');
                         return null;
                     }
 
-                    const assetInfo = await mainnetClient.lookupAssetByID(asset.assetId).do();
+                    const tokenMetadata = algoTokenList.find(m => m.address == assetID);
 
-                    if (!assetInfo.asset) {
-                        console.warn(`No asset found for ID: ${asset.assetId}`);
+                    if (!tokenMetadata) {
+                        console.warn(`No asset found for ID: ${assetID}`);
                         return null;
                     }
 
-                    const params = assetInfo.asset.params;
-
-                    if (params.total === 1) {
-                        console.warn(`Ignoring NFT with ID: ${asset.assetId}`);
-                        return null;
-                    }
-
-                    const decimals = params.decimals || 0;
-                    const rawBalance = asset.amount;
-                    const adjustedBalance = rawBalance / BigInt(Math.pow(10, decimals));
+                    const decimals = tokenMetadata.decimals || 0;
+                    const rawBalance = BigInt(asset.amount);
+                    const adjustedBalance = (rawBalance / BigInt(Math.pow(10, decimals))).toString();
 
                     if (adjustedBalance > 0) {
-                        const tokenId = coinGeckoCoins[params.name.toLowerCase()] || coinGeckoCoins[params['unit-name'].toLowerCase()] || null;
 
                         return {
+                            tokenAddress: assetID,
                             tokenBalance: adjustedBalance.toString(),
-                            tokenName: params.name,
-                            tokenSymbol: params['unit-name'],
-                            tokenId: tokenId,
+                            tokenName: tokenMetadata.name,
+                            tokenSymbol: tokenMetadata.symbol,
                             tokenDecimals: decimals,
-                            tokenPrice: 0,
-                            verified: params.verified || false
+                            tokenPrice: tokenMetadata.price || 0,
                         };
                     }
                     return null;
                 } catch (error) {
-                    console.error(`Error fetching asset ${asset.assetId}:`, error);
+                    console.error(`Error fetching asset ${assetID}:`, error);
                     return null;
                 }
             })
@@ -1343,13 +1323,12 @@ async function fetchAlgorandAddressDetails(address) {
 
         const completeBalances = [
             {
+                tokenAddress: 0,
                 tokenBalance: algoBalance.toString(),
                 tokenName: 'Algorand',
                 tokenSymbol: 'ALGO',
-                tokenId: 0,
                 tokenDecimals: 6,
                 tokenPrice: 0,
-                verified: true
             },
             ...validAssets
         ];
@@ -1365,7 +1344,7 @@ async function fetchAlgorandAddressDetails(address) {
  * @dev calls the fetchAlgorandAddressDetails function for a particular address
  * @param req -> req.body.address == the address passed
  */
-app.post('/fetch-algorand-details/:address', async (req, res) => {
+app.post('/fetch-algorand-details', async (req, res) => {
     const address = req.body.address;
 
     if (!address) {
