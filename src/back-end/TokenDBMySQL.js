@@ -156,7 +156,7 @@ async function fetchAlgorandAssetDetails(assetId) {
 async function algoAssetIds() {
     const connection = await pool.getConnection();
     try {
-        const query = 'INSERT INTO TempTokens (address, name, symbol, decimals, chain, logoURL) VALUES (?, ?, ?, ?, ?, ?)';
+        const query = 'INSERT INTO TempTokens (address, name, symbol, decimals, chain, logoURL, price) VALUES (?, ?, ?, ?, ?, ?, ?)';
         const assetIds = [
             2751733,
             287867876, 
@@ -175,8 +175,9 @@ async function algoAssetIds() {
             return assetDetails;
         }));
 
+        const price = null;
         for (const asset of assetDetailsArray) {
-            await connection.execute(query, [asset.address, asset.name, asset.symbol, asset.decimals, asset.chain, asset.logoURL]);
+            await connection.execute(query, [asset.address, asset.name, asset.symbol, asset.decimals, asset.chain, asset.logoURL, price]);
         }
 
         console.log('Asset Details Array:', assetDetailsArray);
