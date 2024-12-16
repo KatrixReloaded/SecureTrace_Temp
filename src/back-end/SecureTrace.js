@@ -1389,6 +1389,179 @@ app.post('/fetch-algorand-details', async (req, res) => {
     }
 });
 
+
+/** -----------------------------------------------------------------------------
+ * -------------------------- CREDIT SCORE FUNCTIONS ----------------------------
+ * --------------------------------------------------------------------------- */
+
+async function fetchWalletCreditScore(address) {
+    const res = await fetch(
+        `https://beta.credprotocol.com/api/score/address/${address}`,
+        {
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            Authorization: `Token ${process.env.CRED_APIKEY}`,
+          },
+        }
+    );
+
+    const data = await res.json();
+    console.log(data);
+    return data;
+}
+
+app.post('/wallet-credit-score', async (req,res) => {
+    const address=req.body.address;
+
+    try {
+        const credit_score = await fetchWalletCreditScore(address);
+        res.json(credit_score.value);
+    } catch (error) {
+        console.error('Error fetching wallet credit score: '. error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+async function checkContractVerification(address) {
+    const etherscanApiKey = process.env.ETHERSCAN_APIKEY;
+    const url = `https://api.etherscan.io/api?module=contract&action=getabi&address=${address}&apikey=${etherscanApiKey}`;
+
+    try {
+        const response = await fetch(url);
+        const data = await response.json();
+
+        return data.status === "1";
+    } catch (error) {
+        console.error("Error checking contract verification status:", error.message);
+        return false;
+    }
+}
+
+async function fetchSCCreditScore(address, settings) {
+    const alchemy = new Alchemy(settings);
+    let transfers;
+    let creditScore = 0;
+
+    try {
+        const currentBlock = await alchemy.core.getBlockNumber();
+        const fromBlock = currentBlock - 201600;
+        let fromTransfers = await alchemy.core.getAssetTransfers({
+            fromAddress: address,
+            fromBlock: `0x${fromBlock.toString(16)}`,
+            toBlock: 'latest',
+            category: ['erc20', 'erc721', 'external', 'internal'],
+        });
+        let toTransfers = await alchemy.core.getAssetTransfers({
+            toAddress: address,
+            fromBlock: `0x${fromBlock.toString(16)}`,
+            toBlock: 'latest',
+            category: ['erc20', 'erc721', 'external', 'internal'],
+        });
+
+        const uniqueToAddresses = new Set();
+        fromTransfers = (fromTransfers.transfers || []).filter((transfer) => {
+            if (!transfer.to || uniqueToAddresses.has(transfer.to)) {
+                return false;
+            }
+            uniqueToAddresses.add(transfer.to);
+            return true;
+        });
+        const uniqueFromAddresses = new Set();
+        toTransfers = (toTransfers.transfers || []).filter((transfer) => {
+            if (!transfer.from || uniqueFromAddresses.has(transfer.from)) {
+                return false;
+            }
+            uniqueFromAddresses.add(transfer.from);
+            return true;
+        });
+        transfers = [...fromTransfers, ...toTransfers];
+
+        let successTx = 0, failureTx = 0, unknownTx = 0;
+
+        const BATCH_SIZE = 10;
+        for (let i = 0; i < transfers.length; i += BATCH_SIZE) {
+            const batch = transfers.slice(i, i + BATCH_SIZE);
+            await Promise.all(batch.map(async (transfer) => {
+                if (transfer.hash) {
+                    try {
+                        const receipt = await alchemy.core.getTransactionReceipt(transfer.hash);
+                        if (receipt.status === 1) {
+                            transfer.receipt_status = 'Success';
+                            successTx++;
+                        } else {
+                            transfer.receipt_status = 'Failure';
+                            failureTx++;
+                        }
+                    } catch (error) {
+                        transfer.receipt_status = 'Unknown';
+                        unknownTx++;
+                        console.error(`Error fetching receipt for hash ${transfer.hash}:`, error.message);
+                    }
+                } else {
+                    transfer.receipt_status = 'Unknown';
+                }
+            }));
+        }
+        const successPc = (successTx / (successTx + failureTx + unknownTx)) * 100;
+
+        const verificationStatus = await checkContractVerification(address);
+        const vfStatus = verificationStatus ? "Verified" : "Unverified";
+
+        console.log(`Success Percentage: ${successPc}%`);
+        console.log(`Verification Status: ${vfStatus}`);
+        console.log("Transfers with statuses:", transfers);
+
+        creditScore += (successPc/100)*0.33;
+        if(vfStatus === "Verified") {
+            creditScore += 0.33;
+        }
+        const diversity_score = Math.min((uniqueFromAddresses.size + uniqueToAddresses.size)/100, 1);
+        creditScore += diversity_score * 0.34;
+        
+
+        creditScore = creditScore * 1000;
+        return {
+            creditScore: creditScore,
+            successPc: successPc,
+            verificationStatus: vfStatus,
+            diversityScore: diversity_score,
+        };
+    } catch (error) {
+        console.error("Failed to fetch SC Credit score details: ", error);
+        return {
+            success: false,
+            message: error.message,
+        };
+    }
+}
+
+app.post('/sc-credit-score', async (req,res) => {
+    const address = req.body.address;
+    // const chain = req.body.chain;
+
+    // const chains = {
+    //     ethereum: settingsEthereum,
+    //     arbitrum: settingsArbitrum,
+    //     optimism: settingsOptimism,
+    //     polygon: settingsPolygon,
+    // };
+
+    try {
+        const credit_score = await fetchSCCreditScore(address, settingsEthereum);
+        res.json(credit_score);
+    } catch (error) {
+        console.error('Error fetching smart contract credit score: '. error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 /// @note add balance history
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
