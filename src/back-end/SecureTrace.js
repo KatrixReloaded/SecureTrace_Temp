@@ -1281,8 +1281,9 @@ app.post('/top-tokens', async (req, res) => {
  * @dev Uses algosdk to fetch the token balances for an Algorand address and avoids NFTs
  * @param address -> the Algorand address for which the token balances are being fetched
  */
+const mainnetClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
 async function fetchAlgorandAddressDetails(address) {
-    const mainnetClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
     algoTokenList = await fetchAlgorandTokenList();
     const nativeTokenPrices = await fetchNativeTokenPrices();
 
@@ -1389,26 +1390,256 @@ app.post('/fetch-algorand-details', async (req, res) => {
     }
 });
 
+async function fetchAlgorandTransfers(address) {
+    algoTokenList = await fetchAlgorandTokenList();
+    const nativeTokenPrices = await fetchNativeTokenPrices();
+
+    const fetchTransfers = async (direction) => {
+        let transactions = [];
+        let txns = [];
+        let payLen = 0, axferLen = 0;
+
+        try {
+            let response = await mainnetClient.lookupAccountTransactions(address)
+            // .addQuery('address-role', direction === 'to' ? 'receiver' : 'sender')
+            .do();
+
+            while (response.transactions.length) {
+                transactions = transactions.concat(response.transactions);
+
+                if (response['next-token']) {
+                    response = await mainnetClient
+                        .lookupAccountTransactions(address)
+                        // .addQuery('address-role', direction === 'to' ? 'receiver' : 'sender')
+                        .nextToken(response['next-token'])
+                        .do();
+                } else {
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`Error fetching ${direction} transactions:`, error);
+            return [];
+        }
+        
+        console.log("Transactions length:", transactions.length);
+        transactions.forEach(tx => {
+            if (tx.txType === 'pay') {
+                payLen++;
+                const paymentTxn = tx.paymentTransaction;
+                txns.push({
+                    txHash: tx.id,
+                    from: tx.sender,
+                    to: paymentTxn.receiver,
+                    value: Number(paymentTxn.amount) / 1e6,
+                    tokenAddress: null,
+                    symbol: 'ALGO',
+                    decimals: 6,
+                    tokenName: 'Algorand',
+                    price: nativeTokenPrices['coingecko:algorand'].price.toString(),
+                    timestamp: Number(tx.roundTime),
+                    blockNum: Number(tx.confirmedRound),
+                    chain: 'algorand',
+                    logo: 'https://algorand.org/logo.png',
+                });
+            } else if (tx.txType === 'axfer') {
+                axferLen++;
+                const assetTransferTransaction = tx.assetTransferTransaction;
+                if (!assetTransferTransaction || !assetTransferTransaction.receiver) {
+                    console.warn(`Asset transfer transaction missing receiver: ${tx.id}`);
+                    return;
+                }
+        
+                const assetID = assetTransferTransaction.assetId.toString();
+                const tokenMetadata = algoTokenList.find(m => m.address == assetID);
+        
+                if (tokenMetadata) {
+                    txns.push({
+                        txHash: tx.id,
+                        from: tx.sender,
+                        to: assetTransferTransaction.receiver,
+                        value: (BigInt(assetTransferTransaction.amount) / BigInt(10 ** tokenMetadata.decimals)).toString(),
+                        tokenAddress: assetID,
+                        symbol: tokenMetadata.symbol,
+                        decimals: tokenMetadata.decimals || 0,
+                        tokenName: tokenMetadata.name,
+                        price: tokenMetadata.price || 0,
+                        timestamp: Number(tx.roundTime),
+                        blockNum: Number(tx.confirmedRound),
+                        chain: 'algorand',
+                        logo: tokenMetadata.logo || null,
+                    });
+                } else {
+                    txns.push({});
+                }
+            }
+        });
+
+        txns = txns.filter(txn => Object.keys(txn).length > 0);
+        console.log("Txns length:", txns.length);
+        console.log("Pay Length:", payLen, " Axfer Length:", axferLen);
+
+        return txns;
+    };
+
+    try {
+        const [fromTransfers, toTransfers] = await Promise.all([
+            fetchTransfers('from'),
+            fetchTransfers('to'),
+        ]);
+
+        return {
+            fromTransfers,
+            toTransfers,
+        };
+    } catch (error) {
+        console.error('Error fetching Algorand transfers:', error);
+        return {
+            fromTransfers: [],
+            toTransfers: [],
+        };
+    }
+}
+
+app.post('/algo-transfers', async (req, res) => {
+    const address = req.body.address;
+
+    try {
+        const transfers = await fetchAlgorandTransfers(address);
+        res.json(transfers);
+    } catch (error) {
+        console.error('Error fetching algorand transfers: '. error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+async function isAppExisting(appId) {
+    const apiUrl = `https://mainnet-idx.algonode.cloud/v2/applications/${appId}`;
+
+    try {
+        const response = await fetch(apiUrl);
+
+        if (response.ok) {
+            return true;
+        } else if (response.status === 404) {
+            return false;
+        } else {
+            console.error("Unexpected response:", response.statusText);
+            return false;
+        }
+    } catch (error) {
+        console.error("Error checking application existence:", error.message);
+        return false;
+    }
+}
+
+async function fetchAlgoAppCreditScore(appId) {
+    let creditScore = 0;
+
+    try {
+        const currentRound = Number((await mainnetClient.makeHealthCheck().do()).round);
+        const fromRound = Math.max(currentRound - 1728000, 0);
+
+        const appTxnsResponse = await mainnetClient
+            .searchForTransactions()
+            .applicationID(appId)
+            .minRound(fromRound)
+            .do();
+
+        const transactions = appTxnsResponse.transactions;
+
+        const uniqueCallers = new Set();
+        let successTx = 0;
+
+        transactions.forEach((txn) => {
+            if (txn.txType === "appl" && txn.applicationTransaction.onCompletion === "noop") {
+                successTx++;
+                uniqueCallers.add(txn.sender);
+            }
+        });
+
+        const successPc = (successTx / transactions.length) * 100;
+
+        const isVerified = await isAppExisting(appId);
+        const vfStatus = isVerified ? "Verified" : "Unverified";
+
+        const diversityScore = Math.min(uniqueCallers.size / 100, 1);
+
+        console.log(`Success Percentage: ${successPc}%`);
+        console.log(`Verification Status: ${vfStatus}`);
+        console.log("Diversity Score: ", diversityScore);
+
+        creditScore += (successPc / 100) * 0.33;
+        if (vfStatus === "Verified") {
+            creditScore += 0.33;
+        }
+        creditScore += diversityScore * 0.34;
+
+        creditScore = creditScore * 1000;
+
+        if (creditScore > 999) {
+            creditScore--;
+        }
+        
+        console.log("Credit Score: ", creditScore);
+        return {
+            creditScore: creditScore,
+            successPc: successPc,
+            verificationStatus: vfStatus,
+            diversityScore: diversityScore,
+        };
+    } catch (error) {
+        console.error("Failed to fetch App Credit score details: ", error);
+        return {
+            success: false,
+            message: error.message,
+        };
+    }
+}
+
+app.post('/algo-sc-credit-score', async (req, res) => {
+    const appId = req.body.address;
+
+    try {
+        const creditScore = await fetchAlgoAppCreditScore(appId);
+        res.json(creditScore);
+    } catch(error) {
+        console.error('Error fetching Algorand SC credit score: ', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
 
 /** -----------------------------------------------------------------------------
  * -------------------------- CREDIT SCORE FUNCTIONS ----------------------------
  * --------------------------------------------------------------------------- */
 
 async function fetchWalletCreditScore(address) {
-    const res = await fetch(
-        `https://beta.credprotocol.com/api/score/address/${address}`,
-        {
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-            Authorization: `Token ${process.env.CRED_APIKEY}`,
-          },
-        }
-    );
+    try {
+        const res = await axios.get(
+            `https://beta.credprotocol.com/api/score/address/${address}`,
+            {
+            headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+                Authorization: `Token ${process.env.CRED_APIKEY}`,
+            },
+            }
+        );
 
-    const data = await res.json();
-    console.log(data);
-    return data;
+        return res.data;
+    } catch(error) {
+        console.error('Error fetching wallet credit score: ', error);
+        return {
+            success: false,
+            message: error.message,
+        };
+    }
 }
 
 app.post('/wallet-credit-score', async (req,res) => {
@@ -1426,13 +1657,12 @@ app.post('/wallet-credit-score', async (req,res) => {
     }
 });
 
-async function checkContractVerification(address) {
-    const etherscanApiKey = process.env.ETHERSCAN_APIKEY;
-    const url = `https://api.etherscan.io/api?module=contract&action=getabi&address=${address}&apikey=${etherscanApiKey}`;
+async function checkContractVerification(address, apiKey, scannerUrl) {
+    const url = `${scannerUrl}?module=contract&action=getabi&address=${address}&apikey=${apiKey}`;
 
     try {
-        const response = await fetch(url);
-        const data = await response.json();
+        const response = await axios.get(url);
+        const data = await response.data;
 
         return data.status === "1";
     } catch (error) {
@@ -1441,7 +1671,7 @@ async function checkContractVerification(address) {
     }
 }
 
-async function fetchSCCreditScore(address, settings) {
+async function fetchSCCreditScore(address, apiKey, scannerUrl, settings) {
     const alchemy = new Alchemy(settings);
     let transfers;
     let creditScore = 0;
@@ -1453,13 +1683,13 @@ async function fetchSCCreditScore(address, settings) {
             fromAddress: address,
             fromBlock: `0x${fromBlock.toString(16)}`,
             toBlock: 'latest',
-            category: ['erc20', 'erc721', 'external', 'internal'],
+            category: ['erc20', 'erc721', 'external'],
         });
         let toTransfers = await alchemy.core.getAssetTransfers({
             toAddress: address,
             fromBlock: `0x${fromBlock.toString(16)}`,
             toBlock: 'latest',
-            category: ['erc20', 'erc721', 'external', 'internal'],
+            category: ['erc20', 'erc721', 'external'],
         });
 
         const uniqueToAddresses = new Set();
@@ -1508,22 +1738,26 @@ async function fetchSCCreditScore(address, settings) {
         }
         const successPc = (successTx / (successTx + failureTx + unknownTx)) * 100;
 
-        const verificationStatus = await checkContractVerification(address);
+        const verificationStatus = await checkContractVerification(address, apiKey, scannerUrl);
         const vfStatus = verificationStatus ? "Verified" : "Unverified";
 
         console.log(`Success Percentage: ${successPc}%`);
         console.log(`Verification Status: ${vfStatus}`);
-        console.log("Transfers with statuses:", transfers);
-
+        
         creditScore += (successPc/100)*0.33;
         if(vfStatus === "Verified") {
             creditScore += 0.33;
         }
         const diversity_score = Math.min((uniqueFromAddresses.size + uniqueToAddresses.size)/100, 1);
+        console.log("Diversity Score: ", diversity_score);
         creditScore += diversity_score * 0.34;
         
 
         creditScore = creditScore * 1000;
+
+        if(creditScore > 999) {
+            creditScore--;
+        }
         return {
             creditScore: creditScore,
             successPc: successPc,
@@ -1541,17 +1775,31 @@ async function fetchSCCreditScore(address, settings) {
 
 app.post('/sc-credit-score', async (req,res) => {
     const address = req.body.address;
-    // const chain = req.body.chain;
+    const chain = req.body.chain;
 
-    // const chains = {
-    //     ethereum: settingsEthereum,
-    //     arbitrum: settingsArbitrum,
-    //     optimism: settingsOptimism,
-    //     polygon: settingsPolygon,
-    // };
+    const chains = {
+        ethereum: settingsEthereum,
+        arbitrum: settingsArbitrum,
+        optimism: settingsOptimism,
+        polygon: settingsPolygon,
+    };
+
+    const apiKeys = {
+        ethereum: process.env.ETHERSCAN_APIKEY,
+        arbitrum: process.env.ARBISCAN_APIKEY,
+        optimism: process.env.OPTIMISTIC_APIKEY,
+        polygon: process.env.POLYGONSCAN_APIKEY,
+    }
+
+    const scannerUrl = {
+        ethereum: "https://api.etherscan.io/api",
+        arbitrum: "https://api.arbiscan.io/api",
+        optimism: "https://api-optimistic.etherscan.io/api",
+        polygon: "https://api.polygonscan.com/api",
+    }
 
     try {
-        const credit_score = await fetchSCCreditScore(address, settingsEthereum);
+        const credit_score = await fetchSCCreditScore(address, apiKeys[chain], scannerUrl[chain], chains[chain]);
         res.json(credit_score);
     } catch (error) {
         console.error('Error fetching smart contract credit score: '. error);
@@ -1562,7 +1810,6 @@ app.post('/sc-credit-score', async (req,res) => {
     }
 });
 
-/// @note add balance history
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
