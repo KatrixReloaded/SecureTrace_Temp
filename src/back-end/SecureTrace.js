@@ -1281,8 +1281,9 @@ app.post('/top-tokens', async (req, res) => {
  * @dev Uses algosdk to fetch the token balances for an Algorand address and avoids NFTs
  * @param address -> the Algorand address for which the token balances are being fetched
  */
+const mainnetClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
 async function fetchAlgorandAddressDetails(address) {
-    const mainnetClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
     algoTokenList = await fetchAlgorandTokenList();
     const nativeTokenPrices = await fetchNativeTokenPrices();
 
@@ -1390,33 +1391,26 @@ app.post('/fetch-algorand-details', async (req, res) => {
 });
 
 async function fetchAlgorandTransfers(address) {
-    const mainnetClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
     algoTokenList = await fetchAlgorandTokenList();
     const nativeTokenPrices = await fetchNativeTokenPrices();
 
     const fetchTransfers = async (direction) => {
         let transactions = [];
-        const txns = [];
+        let txns = [];
         let payLen = 0, axferLen = 0;
 
-        const params = {
-            address: address,
-        };
-
-        if (direction === 'to') {
-            params['address-role'] = 'receiver';
-        } else if (direction === 'from') {
-            params['address-role'] = 'sender';
-        }
-
         try {
-            let response = await mainnetClient.lookupAccountTransactions(address).do();
+            let response = await mainnetClient.lookupAccountTransactions(address)
+            // .addQuery('address-role', direction === 'to' ? 'receiver' : 'sender')
+            .do();
+
             while (response.transactions.length) {
                 transactions = transactions.concat(response.transactions);
 
                 if (response['next-token']) {
                     response = await mainnetClient
                         .lookupAccountTransactions(address)
+                        // .addQuery('address-role', direction === 'to' ? 'receiver' : 'sender')
                         .nextToken(response['next-token'])
                         .do();
                 } else {
@@ -1430,60 +1424,58 @@ async function fetchAlgorandTransfers(address) {
         
         console.log("Transactions length:", transactions.length);
         transactions.forEach(tx => {
-            console.log(tx.txType);
             if (tx.txType === 'pay') {
-                const paymentTransaction = tx['payment-transaction'];
-                if (!paymentTransaction || !paymentTransaction.receiver) {
-                    console.warn(`Payment transaction missing receiver: ${tx.id}`);
-                    return;
-                }
-        
                 payLen++;
+                const paymentTxn = tx.paymentTransaction;
                 txns.push({
                     txHash: tx.id,
                     from: tx.sender,
-                    to: paymentTransaction.receiver,
-                    value: paymentTransaction.amount / 1e6,
+                    to: paymentTxn.receiver,
+                    value: Number(paymentTxn.amount) / 1e6,
                     tokenAddress: null,
                     symbol: 'ALGO',
                     decimals: 6,
                     tokenName: 'Algorand',
-                    price: (nativeTokenPrices['coingecko:algorand'].price).toString(),
-                    timestamp: tx['round-time'],
-                    blockNum: tx['confirmed-round'],
+                    price: nativeTokenPrices['coingecko:algorand'].price.toString(),
+                    timestamp: Number(tx.roundTime),
+                    blockNum: Number(tx.confirmedRound),
                     chain: 'algorand',
                     logo: 'https://algorand.org/logo.png',
                 });
             } else if (tx.txType === 'axfer') {
-                const assetTransferTransaction = tx['asset-transfer-transaction'];
+                axferLen++;
+                const assetTransferTransaction = tx.assetTransferTransaction;
                 if (!assetTransferTransaction || !assetTransferTransaction.receiver) {
                     console.warn(`Asset transfer transaction missing receiver: ${tx.id}`);
                     return;
                 }
         
-                axferLen++;
-                const assetID = assetTransferTransaction['asset-id'];
+                const assetID = assetTransferTransaction.assetId.toString();
                 const tokenMetadata = algoTokenList.find(m => m.address == assetID);
         
-                if (!tokenMetadata) return;
-        
-                txns.push({
-                    txHash: tx.id,
-                    from: tx.sender,
-                    to: assetTransferTransaction.receiver,
-                    value: assetTransferTransaction.amount / (10 ** tokenMetadata.decimals),
-                    tokenAddress: assetID,
-                    symbol: tokenMetadata.symbol,
-                    decimals: tokenMetadata.decimals || 0,
-                    tokenName: tokenMetadata.name,
-                    price: tokenMetadata.price || 0,
-                    timestamp: tx['round-time'],
-                    blockNum: tx['confirmed-round'],
-                    chain: 'algorand',
-                    logo: tokenMetadata.logo || null,
-                });
+                if (tokenMetadata) {
+                    txns.push({
+                        txHash: tx.id,
+                        from: tx.sender,
+                        to: assetTransferTransaction.receiver,
+                        value: (BigInt(assetTransferTransaction.amount) / BigInt(10 ** tokenMetadata.decimals)).toString(),
+                        tokenAddress: assetID,
+                        symbol: tokenMetadata.symbol,
+                        decimals: tokenMetadata.decimals || 0,
+                        tokenName: tokenMetadata.name,
+                        price: tokenMetadata.price || 0,
+                        timestamp: Number(tx.roundTime),
+                        blockNum: Number(tx.confirmedRound),
+                        chain: 'algorand',
+                        logo: tokenMetadata.logo || null,
+                    });
+                } else {
+                    txns.push({});
+                }
             }
         });
+
+        txns = txns.filter(txn => Object.keys(txn).length > 0);
         console.log("Txns length:", txns.length);
         console.log("Pay Length:", payLen, " Axfer Length:", axferLen);
 
@@ -1524,33 +1516,104 @@ app.post('/algo-transfers', async (req, res) => {
     }
 });
 
-async function isAssetVerified(address) {
-    const apiUrl = "https://mainnet.api.perawallet.app/v1/public/verified-assets/";
+async function isAppExisting(appId) {
+    const apiUrl = `https://mainnet-idx.algonode.cloud/v2/applications/${appId}`;
 
     try {
-        const response = await fetch(apiUrl, {
-            method: "GET",
-            headers: {
-                "Content-Type": "application/json",
-            },
-        });
+        const response = await fetch(apiUrl);
 
-        if (!response.ok) {
-            console.error("Error fetching verified asset list:", response.statusText);
+        if (response.ok) {
+            return true;
+        } else if (response.status === 404) {
+            return false;
+        } else {
+            console.error("Unexpected response:", response.statusText);
             return false;
         }
-
-        const data = await response.json();
-        const verifiedAssets = data.assets;
-
-        return verifiedAssets.some(asset => asset.asset_id === address);
     } catch (error) {
-        console.error("Error checking asset verification:", error.message);
+        console.error("Error checking application existence:", error.message);
         return false;
     }
 }
 
+async function fetchAlgoAppCreditScore(appId) {
+    let creditScore = 0;
 
+    try {
+        const currentRound = Number((await mainnetClient.makeHealthCheck().do()).round);
+        const fromRound = Math.max(currentRound - 1728000, 0);
+
+        const appTxnsResponse = await mainnetClient
+            .searchForTransactions()
+            .applicationID(appId)
+            .minRound(fromRound)
+            .do();
+
+        const transactions = appTxnsResponse.transactions;
+
+        const uniqueCallers = new Set();
+        let successTx = 0;
+
+        transactions.forEach((txn) => {
+            if (txn.txType === "appl" && txn.applicationTransaction.onCompletion === "noop") {
+                successTx++;
+                uniqueCallers.add(txn.sender);
+            }
+        });
+
+        const successPc = (successTx / transactions.length) * 100;
+
+        const isVerified = await isAppExisting(appId);
+        const vfStatus = isVerified ? "Verified" : "Unverified";
+
+        const diversityScore = Math.min(uniqueCallers.size / 100, 1);
+
+        console.log(`Success Percentage: ${successPc}%`);
+        console.log(`Verification Status: ${vfStatus}`);
+        console.log("Diversity Score: ", diversityScore);
+
+        creditScore += (successPc / 100) * 0.33;
+        if (vfStatus === "Verified") {
+            creditScore += 0.33;
+        }
+        creditScore += diversityScore * 0.34;
+
+        creditScore = creditScore * 1000;
+
+        if (creditScore > 999) {
+            creditScore--;
+        }
+        
+        console.log("Credit Score: ", creditScore);
+        return {
+            creditScore: creditScore,
+            successPc: successPc,
+            verificationStatus: vfStatus,
+            diversityScore: diversityScore,
+        };
+    } catch (error) {
+        console.error("Failed to fetch App Credit score details: ", error);
+        return {
+            success: false,
+            message: error.message,
+        };
+    }
+}
+
+app.post('/algo-sc-credit-score', async (req, res) => {
+    const appId = req.body.address;
+
+    try {
+        const creditScore = await fetchAlgoAppCreditScore(appId);
+        res.json(creditScore);
+    } catch(error) {
+        console.error('Error fetching Algorand SC credit score: ', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
 
 /** -----------------------------------------------------------------------------
  * -------------------------- CREDIT SCORE FUNCTIONS ----------------------------
@@ -1692,7 +1755,7 @@ async function fetchSCCreditScore(address, apiKey, scannerUrl, settings) {
 
         creditScore = creditScore * 1000;
 
-        if(creditScore === 1000) {
+        if(creditScore > 999) {
             creditScore--;
         }
         return {
