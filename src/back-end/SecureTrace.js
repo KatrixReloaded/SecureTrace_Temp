@@ -1566,7 +1566,7 @@ async function fetchAlgoAppCreditScore(appId) {
         const isVerified = await isAppExisting(appId);
         const vfStatus = isVerified ? "Verified" : "Unverified";
 
-        const diversityScore = Math.min(uniqueCallers.size / 100, 1);
+        const diversityScore = Math.min(uniqueCallers.size / 500, 1);
 
         console.log(`Success Percentage: ${successPc}%`);
         console.log(`Verification Status: ${vfStatus}`);
@@ -1608,6 +1608,104 @@ app.post('/algo-sc-credit-score', async (req, res) => {
         res.json(creditScore);
     } catch(error) {
         console.error('Error fetching Algorand SC credit score: ', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+async function fetchAlgoWalletCreditScore(walletAddress) {
+    let creditScore = 0;
+
+    try {
+        const currentRound = Number((await mainnetClient.makeHealthCheck().do()).round);
+        const fromRound = Math.max(currentRound - 1728000, 0);
+
+        const accountInfo = await mainnetClient.lookupAccountByID(walletAddress).do();
+        const txHistoryResponse = await mainnetClient
+            .searchForTransactions()
+            .address(walletAddress)
+            .minRound(fromRound)
+            .do();
+
+        const transactions = txHistoryResponse.transactions;
+
+        const balance = Number(accountInfo.account.amount) || 0;
+        const totalTxCount = transactions.length;
+        const uniqueInteractions = new Set();
+        let successfulTx = 0;
+        let recentTxCount = 0;
+
+        const appsCreated = accountInfo.account['created-apps']?.length || 0;
+        const appsOptedIn = accountInfo.account['apps-local-state']?.length || 0;
+        const assetsHeld = accountInfo.account.assets?.length || 0;
+
+        transactions.forEach((txn) => {
+            if (txn.confirmedRound) {
+                successfulTx++;
+                uniqueInteractions.add(txn.sender === walletAddress ? txn.receiver : txn.sender);
+
+                if (txn.confirmedRound >= currentRound - 30000) {
+                    recentTxCount++;
+                }
+            }
+        });
+
+        const txSuccessRate = totalTxCount > 0 ? (successfulTx / totalTxCount) * 100 : 0;
+        const interactionDiversity = Math.min(uniqueInteractions.size / 100, 1);
+        const recentActivityScore = Math.min(recentTxCount / 50, 1);
+
+        const balanceScore = Math.min(Math.log10(balance / 1e6 + 1) / 3, 1);
+
+        console.log(`Balance: ${balance / 1e6} Algos`);
+        console.log(`Balance Score: ${balanceScore}`);
+        console.log(`Transaction Success Rate: ${txSuccessRate}%`);
+        console.log(`Interaction Diversity Score: ${interactionDiversity}`);
+        console.log(`Recent Activity Score: ${recentActivityScore}`);
+        console.log(`Apps Created: ${appsCreated}`);
+        console.log(`Apps Opted Into: ${appsOptedIn}`);
+        console.log(`Assets Held: ${assetsHeld}`);
+
+        creditScore += (txSuccessRate / 100) * 0.2;
+        creditScore += balanceScore * 0.1;
+        creditScore += interactionDiversity * 0.25;
+        creditScore += recentActivityScore * 0.15;
+        creditScore += Math.min(appsCreated / 10, 1) * 0.1;
+        creditScore += Math.min(appsOptedIn / 50, 1) * 0.1;
+        creditScore += Math.min(assetsHeld / 20, 1) * 0.1;
+
+        creditScore = Math.min(999, Math.floor(creditScore * 1000));
+
+        console.log("Wallet Credit Score: ", creditScore);
+
+        return {
+            creditScore,
+            txSuccessRate,
+            interactionDiversity,
+            recentActivityScore,
+            balance: balance / 1e6,
+            appsCreated,
+            appsOptedIn,
+            assetsHeld,
+        };
+    } catch (error) {
+        console.error("Failed to fetch Wallet Credit Score details: ", error);
+        return {
+            success: false,
+            message: error.message,
+        };
+    }
+}
+
+app.post('/algo-wallet-credit-score', async (req, res) => {
+    const address = req.body.address;
+    
+    try {
+        const creditScore = await fetchAlgoWalletCreditScore(address);
+        res.json(creditScore);
+    } catch (error) {
+        console.error('Error fetching Algorand wallet credit score: ', error);
         res.status(500).json({
             success: false,
             error: error.message
@@ -1776,6 +1874,8 @@ async function fetchSCCreditScore(address, apiKey, scannerUrl, settings) {
 app.post('/sc-credit-score', async (req,res) => {
     const address = req.body.address;
     const chain = req.body.chain;
+    console.log("Address: ", address);
+    console.log("Chain: ", chain);
 
     const chains = {
         ethereum: settingsEthereum,
