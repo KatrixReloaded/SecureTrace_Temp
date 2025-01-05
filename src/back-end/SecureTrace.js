@@ -1594,6 +1594,112 @@ async function isAppExisting(appId) {
 }
 
 /**
+ * @notice Fetches the details of transfers made in a single transaction using the transaction ID
+ * @param txId -> the transaction ID for which the details are being fetched
+ * @returns an object containing the transaction details
+ */
+async function fetchAlgorandTransactionDetails(txId) {
+    try {
+        const txInfo = await mainnetClient.lookupTransactionByID(txId).do();
+        const nativeTokenPrices = await fetchNativeTokenPrices();
+        const algoTokenList = await fetchAlgorandTokenList();
+
+        if (!txInfo) {
+            throw new Error('Transaction not found');
+        }
+
+        const txDetails = [];
+        const tx = txInfo.transaction;
+
+        const processTransaction = (transaction) => {
+            if (transaction.txType === 'pay') {
+                const paymentTxn = transaction.paymentTransaction;
+                txDetails.push({
+                    txHash: transaction.id,
+                    from: transaction.sender,
+                    to: paymentTxn.receiver,
+                    value: (Number(paymentTxn.amount) / 1e6),
+                    tokenAddress: null,
+                    symbol: 'ALGO',
+                    decimals: 6,
+                    tokenName: 'Algorand',
+                    price: nativeTokenPrices['coingecko:algorand'].price.toString(),
+                    timestamp: Number(transaction.roundTime),
+                    blockNum: Number(transaction.confirmedRound),
+                    chain: 'algorand',
+                    logo: 'https://algorand.org/logo.png',
+                });
+            } else if (transaction.txType === 'axfer') {
+                const assetTransferTransaction = transaction.assetTransferTransaction;
+                if (!assetTransferTransaction || !assetTransferTransaction.receiver) {
+                    console.warn(`Asset transfer transaction missing receiver: ${transaction.id}`);
+                    return;
+                }
+
+                const assetID = assetTransferTransaction.assetId.toString();
+                const tokenMetadata = algoTokenList.find(m => m.address == assetID);
+
+                if (tokenMetadata) {
+                    txDetails.push({
+                        txHash: transaction.id,
+                        from: transaction.sender,
+                        to: assetTransferTransaction.receiver,
+                        value: (Number((BigInt(assetTransferTransaction.amount) / BigInt(10 ** tokenMetadata.decimals)))),
+                        tokenAddress: assetID,
+                        symbol: tokenMetadata.symbol,
+                        decimals: tokenMetadata.decimals || 0,
+                        tokenName: tokenMetadata.name,
+                        price: tokenMetadata.price || 0,
+                        timestamp: Number(transaction.roundTime),
+                        blockNum: Number(transaction.confirmedRound),
+                        chain: 'algorand',
+                        logo: tokenMetadata.logo || null,
+                    });
+                }
+            }
+        };
+
+        processTransaction(tx);
+
+        if (tx.innerTxns) {
+            tx.innerTxns.forEach(innerTx => processTransaction(innerTx));
+        }
+
+        return txDetails;
+    } catch (error) {
+        console.error('Error fetching Algorand transaction details:', error);
+        throw new Error(`Failed to fetch Algorand transaction details: ${error.message}`);
+    }
+}
+
+/**
+ * @notice POST function to fetch the details of transfers made in a single transaction using the transaction ID
+ * @param req -> req.body.txId == the transaction ID passed
+ * @returns res -> the response containing the transaction details
+ */
+app.post('/algo-transaction-details', async (req, res) => {
+    const txId = req.body.txId;
+
+    if (!txId) {
+        return res.status(400).json({ error: 'Transaction ID is required' });
+    }
+
+    try {
+        const txDetails = await fetchAlgorandTransactionDetails(txId);
+        res.json({ 
+            success: true,
+            transaction: txDetails 
+        });
+    } catch (error) {
+        console.error('Error fetching Algorand transaction details:', error);
+        res.status(500).json({ 
+            success: false,
+            error: error.message 
+        });
+    }
+});
+
+/**
  * @notice Fetches the Algorand Smart Contract credit score
  * @param appId -> the Algorand Smart Contract ID
  */
