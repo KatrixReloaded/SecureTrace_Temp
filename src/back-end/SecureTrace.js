@@ -1390,7 +1390,17 @@ app.post('/fetch-algorand-details', async (req, res) => {
     }
 });
 
-async function fetchAlgorandTransfers(address) {
+/**
+ * @notice Fetches the token transfers made to/from an Algorand address
+ * @param address -> the Algorand address for which the token transfers are being fetched
+ * @returns an object containing the from and to transfers
+ */
+async function fetchAlgorandTransfers(address, startDate, endDate, timestamp, isOutgoing) {
+    console.log("Address: ", address);
+    console.log("Start Date: ", startDate);
+    console.log("End Date: ", endDate);
+    console.log("Timestamp: ", timestamp);
+    console.log("Is Outgoing: ", isOutgoing);
     algoTokenList = await fetchAlgorandTokenList();
     const nativeTokenPrices = await fetchNativeTokenPrices();
 
@@ -1400,9 +1410,24 @@ async function fetchAlgorandTransfers(address) {
         let payLen = 0, axferLen = 0;
 
         try {
-            let response = await mainnetClient.lookupAccountTransactions(address)
-            // .addQuery('address-role', direction === 'to' ? 'receiver' : 'sender')
-            .do();
+            let response;
+            if(startDate !== null && endDate !== null) {
+                response = await mainnetClient
+                    .lookupAccountTransactions(address)
+                    .afterTime(startDate)
+                    .beforeTime(endDate)
+                    .do();
+            } else if(timestamp !== null && isOutgoing === true) {
+                response = await mainnetClient
+                    .lookupAccountTransactions(address)
+                    .afterTime(timestamp)
+                    .do();
+            } else {
+                response = await mainnetClient
+                    .lookupAccountTransactions(address)
+                    .beforeTime
+                    .do();
+            }
 
             while (response.transactions.length) {
                 transactions = transactions.concat(response.transactions);
@@ -1410,7 +1435,6 @@ async function fetchAlgorandTransfers(address) {
                 if (response['next-token']) {
                     response = await mainnetClient
                         .lookupAccountTransactions(address)
-                        // .addQuery('address-role', direction === 'to' ? 'receiver' : 'sender')
                         .nextToken(response['next-token'])
                         .do();
                 } else {
@@ -1421,7 +1445,7 @@ async function fetchAlgorandTransfers(address) {
             console.error(`Error fetching ${direction} transactions:`, error);
             return [];
         }
-        
+
         console.log("Transactions length:", transactions.length);
         transactions.forEach(tx => {
             if (tx.txType === 'pay') {
@@ -1431,7 +1455,7 @@ async function fetchAlgorandTransfers(address) {
                     txHash: tx.id,
                     from: tx.sender,
                     to: paymentTxn.receiver,
-                    value: Number(paymentTxn.amount) / 1e6,
+                    value: (Number(paymentTxn.amount) / 1e6),
                     tokenAddress: null,
                     symbol: 'ALGO',
                     decimals: 6,
@@ -1449,7 +1473,7 @@ async function fetchAlgorandTransfers(address) {
                     console.warn(`Asset transfer transaction missing receiver: ${tx.id}`);
                     return;
                 }
-        
+
                 const assetID = assetTransferTransaction.assetId.toString();
                 const tokenMetadata = algoTokenList.find(m => m.address == assetID);
         
@@ -1458,7 +1482,7 @@ async function fetchAlgorandTransfers(address) {
                         txHash: tx.id,
                         from: tx.sender,
                         to: assetTransferTransaction.receiver,
-                        value: (BigInt(assetTransferTransaction.amount) / BigInt(10 ** tokenMetadata.decimals)).toString(),
+                        value: (Number((BigInt(assetTransferTransaction.amount) / BigInt(10 ** tokenMetadata.decimals)))),
                         tokenAddress: assetID,
                         symbol: tokenMetadata.symbol,
                         decimals: tokenMetadata.decimals || 0,
@@ -1475,22 +1499,18 @@ async function fetchAlgorandTransfers(address) {
             }
         });
 
-        txns = txns.filter(txn => Object.keys(txn).length > 0);
-        console.log("Txns length:", txns.length);
-        console.log("Pay Length:", payLen, " Axfer Length:", axferLen);
+        txns = txns.filter((txn) => Object.keys(txn).length > 0);
+        console.log(`${direction} Txns length:`, txns.length);
+        console.log(`${direction} Pay Length:`, payLen, ` Axfer Length:`, axferLen);
 
         return txns;
     };
 
     try {
-        const [fromTransfers, toTransfers] = await Promise.all([
-            fetchTransfers('from'),
-            fetchTransfers('to'),
-        ]);
+        const transfers = await fetchTransfers('to');
 
         return {
-            fromTransfers,
-            toTransfers,
+            transfers
         };
     } catch (error) {
         console.error('Error fetching Algorand transfers:', error);
@@ -1501,12 +1521,45 @@ async function fetchAlgorandTransfers(address) {
     }
 }
 
+
+
+/**
+ * @notice POST function to fetch the token transfers for an Algorand address
+ * @dev calls the fetchAlgorandTransfers function for a particular address
+ * @param req -> req.body.address == the address passed
+ * @param req -> req.body.timestamp == the timestamp after which the transfers executed are being fetched
+ * @param req -> req.body.isOutgoing == the direction of the transfers
+ * @param req -> req.body.startDate == the start date for the transfers
+ * @param req -> req.body.endDate == the end date for the transfers
+ * @returns res -> the response containing the from and to transfers
+ */
 app.post('/algo-transfers', async (req, res) => {
     const address = req.body.address;
+    let timestamp = req.body.timestamp ?? 0;
+    const isOutgoing = req.body.isOutgoing !== undefined ? req.body.isOutgoing : true;
+    let startDate = req.body.startDate ?? 0;
+    let endDate = req.body.endDate ?? 4294967295000;
+
 
     try {
-        const transfers = await fetchAlgorandTransfers(address);
-        res.json(transfers);
+        if(isOutgoing && timestamp !== 0) {
+            timestamp = new Date(timestamp*1000).toISOString();
+            
+            const transfers = await fetchAlgorandTransfers(address, null, null, timestamp, isOutgoing);
+            
+            res.json(transfers);
+        } else if(isOutgoing) {
+            startDate = new Date(startDate).toISOString();
+            endDate = new Date(endDate).toISOString();
+            
+            const transfers = await fetchAlgorandTransfers(address, startDate, endDate, null, isOutgoing);
+            
+            res.json(transfers);
+        } else {
+            const transfers = await fetchAlgorandTransfers(address, null, null, timestamp, isOutgoing);
+            
+            res.json(transfers);
+        }
     } catch (error) {
         console.error('Error fetching algorand transfers: '. error);
         res.status(500).json({
@@ -1516,6 +1569,10 @@ app.post('/algo-transfers', async (req, res) => {
     }
 });
 
+/**
+ * @notice Fetches the Algorand Smart Contract details to verify existence
+ * @param appId -> the Algorand Smart Contract ID
+ */
 async function isAppExisting(appId) {
     const apiUrl = `https://mainnet-idx.algonode.cloud/v2/applications/${appId}`;
 
@@ -1536,6 +1593,10 @@ async function isAppExisting(appId) {
     }
 }
 
+/**
+ * @notice Fetches the Algorand Smart Contract credit score
+ * @param appId -> the Algorand Smart Contract ID
+ */
 async function fetchAlgoAppCreditScore(appId) {
     let creditScore = 0;
 
@@ -1566,7 +1627,7 @@ async function fetchAlgoAppCreditScore(appId) {
         const isVerified = await isAppExisting(appId);
         const vfStatus = isVerified ? "Verified" : "Unverified";
 
-        const diversityScore = Math.min(uniqueCallers.size / 100, 1);
+        const diversityScore = Math.min(uniqueCallers.size / 500, 1);
 
         console.log(`Success Percentage: ${successPc}%`);
         console.log(`Verification Status: ${vfStatus}`);
@@ -1600,6 +1661,11 @@ async function fetchAlgoAppCreditScore(appId) {
     }
 }
 
+/**
+ * @notice POST function to fetch the Algorand Smart Contract credit score
+ * @param req -> req.body.address == the address passed
+ * @returns res -> the response containing the credit score
+ */
 app.post('/algo-sc-credit-score', async (req, res) => {
     const appId = req.body.address;
 
@@ -1608,6 +1674,104 @@ app.post('/algo-sc-credit-score', async (req, res) => {
         res.json(creditScore);
     } catch(error) {
         console.error('Error fetching Algorand SC credit score: ', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * @notice Fetches the Algorand Wallet credit score
+ * @param walletAddress -> the Algorand Wallet address
+ */
+async function fetchAlgoWalletCreditScore(walletAddress) {
+    let creditScore = 0;
+
+    try {
+        const currentRound = Number((await mainnetClient.makeHealthCheck().do()).round);
+        const fromRound = Math.max(currentRound - 1728000, 0);
+
+        const accountInfo = await mainnetClient.lookupAccountByID(walletAddress).do();
+        const txHistoryResponse = await mainnetClient
+            .searchForTransactions()
+            .address(walletAddress)
+            .minRound(fromRound)
+            .do();
+
+        const transactions = txHistoryResponse.transactions;
+
+        const balance = Number(accountInfo.account.amount) || 0;
+        const totalTxCount = transactions.length;
+        const uniqueInteractions = new Set();
+        let successfulTx = 0;
+        let recentTxCount = 0;
+
+        const appsCreated = accountInfo.account['created-apps']?.length || 0;
+        const appsOptedIn = accountInfo.account['apps-local-state']?.length || 0;
+        const assetsHeld = accountInfo.account.assets?.length || 0;
+
+        transactions.forEach((txn) => {
+            if (txn.confirmedRound) {
+                successfulTx++;
+                uniqueInteractions.add(txn.sender === walletAddress ? txn.receiver : txn.sender);
+
+                if (txn.confirmedRound >= currentRound - 30000) {
+                    recentTxCount++;
+                }
+            }
+        });
+
+        const txSuccessRate = totalTxCount > 0 ? (successfulTx / totalTxCount) * 100 : 0;
+        const interactionDiversity = Math.min(uniqueInteractions.size / 100, 1);
+        const recentActivityScore = Math.min(recentTxCount / 50, 1);
+
+        const balanceScore = Math.min(Math.log10(balance / 1e6 + 1) / 3, 1);
+
+        console.log(`Balance: ${balance / 1e6} Algos`);
+        console.log(`Balance Score: ${balanceScore}`);
+        console.log(`Transaction Success Rate: ${txSuccessRate}%`);
+        console.log(`Interaction Diversity Score: ${interactionDiversity}`);
+        console.log(`Recent Activity Score: ${recentActivityScore}`);
+        console.log(`Apps Created: ${appsCreated}`);
+        console.log(`Apps Opted Into: ${appsOptedIn}`);
+        console.log(`Assets Held: ${assetsHeld}`);
+
+        creditScore += (txSuccessRate / 100) * 0.2;
+        creditScore += balanceScore * 0.1;
+        creditScore += interactionDiversity * 0.25;
+        creditScore += recentActivityScore * 0.15;
+        creditScore += Math.min(appsCreated / 10, 1) * 0.1;
+        creditScore += Math.min(appsOptedIn / 50, 1) * 0.1;
+        creditScore += Math.min(assetsHeld / 20, 1) * 0.1;
+
+        creditScore = Math.min(999, Math.floor(creditScore * 1000));
+
+        console.log("Wallet Credit Score: ", creditScore);
+
+        return creditScore;
+    } catch (error) {
+        console.error("Failed to fetch Wallet Credit Score details: ", error);
+        return {
+            success: false,
+            message: error.message,
+        };
+    }
+}
+
+/**
+ * @notice POST function to fetch the Algorand Wallet credit score
+ * @param req -> req.body.address == the address passed
+ * @returns res -> the response containing the credit score
+ */
+app.post('/algo-wallet-credit-score', async (req, res) => {
+    const address = req.body.address;
+    
+    try {
+        const creditScore = await fetchAlgoWalletCreditScore(address);
+        res.json(creditScore);
+    } catch (error) {
+        console.error('Error fetching Algorand wallet credit score: ', error);
         res.status(500).json({
             success: false,
             error: error.message
@@ -1776,6 +1940,8 @@ async function fetchSCCreditScore(address, apiKey, scannerUrl, settings) {
 app.post('/sc-credit-score', async (req,res) => {
     const address = req.body.address;
     const chain = req.body.chain;
+    console.log("Address: ", address);
+    console.log("Chain: ", chain);
 
     const chains = {
         ethereum: settingsEthereum,
