@@ -1395,7 +1395,12 @@ app.post('/fetch-algorand-details', async (req, res) => {
  * @param address -> the Algorand address for which the token transfers are being fetched
  * @returns an object containing the from and to transfers
  */
-async function fetchAlgorandTransfers(address) {
+async function fetchAlgorandTransfers(address, startDate, endDate, timestamp, isOutgoing) {
+    console.log("Address: ", address);
+    console.log("Start Date: ", startDate);
+    console.log("End Date: ", endDate);
+    console.log("Timestamp: ", timestamp);
+    console.log("Is Outgoing: ", isOutgoing);
     algoTokenList = await fetchAlgorandTokenList();
     const nativeTokenPrices = await fetchNativeTokenPrices();
 
@@ -1405,10 +1410,24 @@ async function fetchAlgorandTransfers(address) {
         let payLen = 0, axferLen = 0;
 
         try {
-            let response = await mainnetClient
-                .lookupAccountTransactions(address)
-                //.addQuery('address-role', direction === 'to' ? 'receiver' : 'sender') // Filter based on direction
-                .do();
+            let response;
+            if(startDate !== null && endDate !== null) {
+                response = await mainnetClient
+                    .lookupAccountTransactions(address)
+                    .afterTime(startDate)
+                    .beforeTime(endDate)
+                    .do();
+            } else if(timestamp !== null && isOutgoing === true) {
+                response = await mainnetClient
+                    .lookupAccountTransactions(address)
+                    .afterTime(timestamp)
+                    .do();
+            } else {
+                response = await mainnetClient
+                    .lookupAccountTransactions(address)
+                    .beforeTime
+                    .do();
+            }
 
             while (response.transactions.length) {
                 transactions = transactions.concat(response.transactions);
@@ -1416,9 +1435,8 @@ async function fetchAlgorandTransfers(address) {
                 if (response['next-token']) {
                     response = await mainnetClient
                         .lookupAccountTransactions(address)
-                        //.addQuery('address-role', direction === 'to' ? 'receiver' : 'sender')
                         .nextToken(response['next-token'])
-                        .do({ 'address-role': direction === 'to' ? 'receiver' : 'sender' });
+                        .do();
                 } else {
                     break;
                 }
@@ -1489,14 +1507,10 @@ async function fetchAlgorandTransfers(address) {
     };
 
     try {
-        const [fromTransfers, toTransfers] = await Promise.all([
-            fetchTransfers('from'),
-            fetchTransfers('to'),
-        ]);
+        const transfers = await fetchTransfers('to');
 
         return {
-            fromTransfers,
-            toTransfers,
+            transfers
         };
     } catch (error) {
         console.error('Error fetching Algorand transfers:', error);
@@ -1513,14 +1527,39 @@ async function fetchAlgorandTransfers(address) {
  * @notice POST function to fetch the token transfers for an Algorand address
  * @dev calls the fetchAlgorandTransfers function for a particular address
  * @param req -> req.body.address == the address passed
+ * @param req -> req.body.timestamp == the timestamp after which the transfers executed are being fetched
+ * @param req -> req.body.isOutgoing == the direction of the transfers
+ * @param req -> req.body.startDate == the start date for the transfers
+ * @param req -> req.body.endDate == the end date for the transfers
  * @returns res -> the response containing the from and to transfers
  */
 app.post('/algo-transfers', async (req, res) => {
     const address = req.body.address;
+    let timestamp = req.body.timestamp ?? 0;
+    const isOutgoing = req.body.isOutgoing !== undefined ? req.body.isOutgoing : true;
+    let startDate = req.body.startDate ?? 0;
+    let endDate = req.body.endDate ?? 4294967295000;
+
 
     try {
-        const transfers = await fetchAlgorandTransfers(address);
-        res.json(transfers);
+        if(isOutgoing && timestamp !== 0) {
+            timestamp = new Date(timestamp*1000).toISOString();
+            
+            const transfers = await fetchAlgorandTransfers(address, null, null, timestamp, isOutgoing);
+            
+            res.json(transfers);
+        } else if(isOutgoing) {
+            startDate = new Date(startDate).toISOString();
+            endDate = new Date(endDate).toISOString();
+            
+            const transfers = await fetchAlgorandTransfers(address, startDate, endDate, null, isOutgoing);
+            
+            res.json(transfers);
+        } else {
+            const transfers = await fetchAlgorandTransfers(address, null, null, timestamp, isOutgoing);
+            
+            res.json(transfers);
+        }
     } catch (error) {
         console.error('Error fetching algorand transfers: '. error);
         res.status(500).json({
