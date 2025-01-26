@@ -1,7 +1,9 @@
 const mysql = require('mysql2/promise');
 const axios = require('axios');
+const puppeteer = require('puppeteer');
 require('dotenv').config();
 const algosdk = require('algosdk');
+const cheerio = require('cheerio');
 // const {getConnection} = require('./db');
 
 const pool = mysql.createPool({
@@ -190,4 +192,79 @@ async function algoAssetIds() {
     }
 }
 
-fetchPrices();
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function scrapeCoinGeckoTokens() {
+    const tokenMap = {};
+    const browser = await puppeteer.launch();
+    const page = await browser.newPage();
+
+    for (let pageNum = 1; pageNum <= 57; pageNum++) {
+        const url = `https://www.coingecko.com/?page=${pageNum}&items=300`;
+        try {
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.66 Safari/537.36');
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+            const content = await page.content();
+            const $ = cheerio.load(content);
+
+            console.log("Scraping page ", pageNum);
+            const rows = $('table.sortable tbody tr');
+            console.log(`Found ${rows.length} rows on page ${pageNum}`);
+
+            rows.each((i, element) => {
+                const logoUrl = $(element).find('td:nth-child(3) a img').attr('src');
+                const symbol = $(element).find('td:nth-child(3) div div div').text().trim().toLowerCase();
+                console.log({ symbol, logoUrl });
+                if (symbol && logoUrl) {
+                    tokenMap[symbol] = logoUrl;
+                }
+            });
+
+            console.log(`Scraped page ${pageNum}`);
+            await delay(1000); // 1 second delay to avoid rate limit
+        } catch (error) {
+            console.error(`Error scraping page ${pageNum}:`, error.message);
+            await delay(60000); // Wait for 1 minute before retrying
+        }
+    }
+
+    await browser.close();
+    return tokenMap;
+}
+
+// Function to fetch and update token logos
+async function fetchAndUpdateTokenLogos() {
+    const connection = await pool.getConnection();
+
+    try {
+        // Scrape the CoinGecko page to get the token symbols and logo URLs
+        const tokenMap = await scrapeCoinGeckoTokens();
+
+        // Fetch the tokens from your database
+        const [rows] = await connection.execute('SELECT address, symbol FROM TempTokens');
+        const dbTokens = rows;
+
+        // Match the tokens and update the database with the image URLs
+        for (const dbToken of dbTokens) {
+            const logoUrl = tokenMap[dbToken.symbol.toLowerCase()];
+            if (logoUrl) {
+                try {
+                    await connection.execute('UPDATE TempTokens SET logoURL = ? WHERE address = ?', [logoUrl, dbToken.address]);
+                    console.log("Updated logo for token", dbToken.symbol);
+                } catch (error) {
+                    console.error(`Error updating logo for token ${dbToken.symbol}:`, error.message);
+                    continue; // Skip to the next iteration
+                }
+            }
+        }
+
+        console.log('Token logos updated successfully');
+    } catch (error) {
+        console.error('Error fetching or updating token logos:', error);
+    } finally {
+        connection.release();
+    }
+}
+
+// Call the function to fetch and update token logos
+fetchAndUpdateTokenLogos();

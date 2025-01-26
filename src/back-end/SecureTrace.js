@@ -301,6 +301,17 @@ async function fetchNativeTokenPrices() {
     }
 }
 
+async function convertURLToBase64(imageUrl) {
+    if(!imageUrl) return null;
+    try {
+        const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+        return 'data:image/png;base64,' + Buffer.from(response.data, 'binary').toString('base64');
+    } catch(error) {
+        console.error('Failed to convert image to base64:', error.message);
+        return null;
+    }
+}
+
 
 /** ----------------------------------------------------------------------------- 
 ----------------------------- PORTFOLIO TRACKER ---------------------------------
@@ -348,6 +359,7 @@ async function fetchAddressDetails(settings, address) {
                 tokenSymbol: tokenMetadata.symbol,
                 tokenAddress: contractAddress,
                 tokenPrice: 0,
+                // logo: await convertURLToBase64(tokenMetadata.logo),
                 logo: tokenMetadata.logo,
             };
         }
@@ -528,6 +540,7 @@ async function tokenTransfers(settings, address, fromBlockNum, toBlockNum, token
                 tokenPrice: null,
                 tokenName: tokenMetadata.name,
                 chain: chainKey,
+                // logo: await convertURLToBase64(tokenMetadata.logo),
                 logo: tokenMetadata.logo,
                 blockNum: tx.blockNum
             };
@@ -618,7 +631,7 @@ async function backwardTokenTransfers(settings, address, startBlock, tokenList, 
             }
 
             if (tokenMetadata) {
-                txs.forEach(tx => {
+                txs.forEach(async (tx) => {
                     processedTransfers.push({
                         txHash: tx.hash,
                         from: tx.from,
@@ -631,6 +644,7 @@ async function backwardTokenTransfers(settings, address, startBlock, tokenList, 
                         tokenPrice: null,
                         tokenName: tokenMetadata.name,
                         chain: chainKey,
+                        // logo: await convertURLToBase64(tokenMetadata.logo),
                         logo: tokenMetadata.logo,
                         blockNum: tx.blockNum,
                     });
@@ -1425,7 +1439,7 @@ async function fetchAlgorandTransfers(address, startDate, endDate, timestamp, is
             } else {
                 response = await mainnetClient
                     .lookupAccountTransactions(address)
-                    .beforeTime
+                    .beforeTime(timestamp)
                     .do();
             }
 
@@ -1447,7 +1461,7 @@ async function fetchAlgorandTransfers(address, startDate, endDate, timestamp, is
         }
 
         console.log("Transactions length:", transactions.length);
-        transactions.forEach(tx => {
+        transactions.forEach( async (tx) => {
             if (tx.txType === 'pay') {
                 payLen++;
                 const paymentTxn = tx.paymentTransaction;
@@ -1491,6 +1505,7 @@ async function fetchAlgorandTransfers(address, startDate, endDate, timestamp, is
                         timestamp: Number(tx.roundTime),
                         blockNum: Number(tx.confirmedRound),
                         chain: 'algorand',
+                        // logo: await convertURLToBase64(tokenMetadata.logo) || null,
                         logo: tokenMetadata.logo || null,
                     });
                 } else {
@@ -1540,7 +1555,6 @@ app.post('/algo-transfers', async (req, res) => {
     let startDate = req.body.startDate ?? 0;
     let endDate = req.body.endDate ?? 4294967295000;
 
-
     try {
         if(isOutgoing && timestamp !== 0) {
             timestamp = new Date(timestamp*1000).toISOString();
@@ -1565,6 +1579,110 @@ app.post('/algo-transfers', async (req, res) => {
         res.status(500).json({
             success: false,
             error: error.message
+        });
+    }
+});
+
+/**
+ * @notice Fetches the details of transfers made in a single transaction using the transaction ID
+ * @param txId -> the transaction ID for which the details are being fetched
+ * @returns an object containing the transaction details
+*/
+async function fetchAlgorandTransactionDetails(txId) {
+    try {
+        const txInfo = await mainnetClient.lookupTransactionByID(txId).do();
+        const nativeTokenPrices = await fetchNativeTokenPrices();
+        const algoTokenList = await fetchAlgorandTokenList();
+        
+        if (!txInfo) {
+            throw new Error('Transaction not found');
+        }
+        
+        const txDetails = [];
+        const tx = txInfo.transaction;
+        
+        const processTransaction = async (transaction) => {
+            if (transaction.txType === 'pay') {
+                const paymentTxn = transaction.paymentTransaction;
+                txDetails.push({
+                    txHash: transaction.id,
+                    from: transaction.sender,
+                    to: paymentTxn.receiver,
+                    value: (Number(paymentTxn.amount) / 1e6),
+                    tokenAddress: null,
+                    symbol: 'ALGO',
+                    decimals: 6,
+                    tokenName: 'Algorand',
+                    price: nativeTokenPrices['coingecko:algorand'].price.toString(),
+                    timestamp: Number(transaction.roundTime),
+                    blockNum: Number(transaction.confirmedRound),
+                    chain: 'algorand',
+                    logo: 'https://algorand.org/logo.png',
+                });
+            } else if (transaction.txType === 'axfer') {
+                const assetTransferTransaction = transaction.assetTransferTransaction;
+                if (!assetTransferTransaction || !assetTransferTransaction.receiver) {
+                    console.warn(`Asset transfer transaction missing receiver: ${transaction.id}`);
+                    return;
+                }
+                
+                const assetID = assetTransferTransaction.assetId.toString();
+                const tokenMetadata = algoTokenList.find(m => m.address == assetID);
+                
+                if (tokenMetadata) {
+                    txDetails.push({
+                        txHash: transaction.id,
+                        from: transaction.sender,
+                        to: assetTransferTransaction.receiver,
+                        value: (Number((BigInt(assetTransferTransaction.amount) / BigInt(10 ** tokenMetadata.decimals)))),
+                        tokenAddress: assetID,
+                        symbol: tokenMetadata.symbol,
+                        decimals: tokenMetadata.decimals || 0,
+                        tokenName: tokenMetadata.name,
+                        price: tokenMetadata.price || 0,
+                        timestamp: Number(transaction.roundTime),
+                        blockNum: Number(transaction.confirmedRound),
+                        chain: 'algorand',
+                        // logo: await convertURLToBase64(tokenMetadata.logo) || null,
+                        logo: tokenMetadata.logo || null,
+                    });
+                }
+            }
+        };
+        
+        processTransaction(tx);
+        
+        if (tx.innerTxns) {
+            tx.innerTxns.forEach(innerTx => processTransaction(innerTx));
+        }
+        
+        return txDetails;
+    } catch (error) {
+        console.error('Error fetching Algorand transaction details:', error);
+        throw new Error(`Failed to fetch Algorand transaction details: ${error.message}`);
+    }
+}
+
+/**
+ * @notice POST function to fetch the details of transfers made in a single transaction using the transaction ID
+ * @param req -> req.body.txId == the transaction ID passed
+ * @returns res -> the response containing the transaction details
+*/
+app.post('/algo-transaction-details', async (req, res) => {
+    const txId = req.body.txId;
+    
+    if (!txId) {
+        return res.status(400).json({ error: 'Transaction ID is required' });
+    }
+    
+    try {
+        const txDetails = await fetchAlgorandTransactionDetails(txId);
+        res.json(txDetails);
+    } catch (error) {
+        console.error('Error fetching Algorand transaction details:', error);
+        res.status(500).json({ 
+            success: false,
+            error: error.message 
         });
     }
 });
