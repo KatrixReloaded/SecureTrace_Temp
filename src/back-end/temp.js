@@ -3,7 +3,7 @@ require('dotenv').config();
 
 const settings = {
     apiKey: process.env.ALCHEMY_APIKEY,
-    network: Network.ETH_MAINNET, // Replace with the appropriate network
+    network: Network.BASE_MAINNET, // Replace with the appropriate network
 };
 
 const alchemy = new Alchemy(settings);
@@ -17,7 +17,7 @@ async function getBlockNumberByDate(date) {
 
     while (low <= high) {
         const mid = Math.floor((low + high) / 2);
-        const block = await alchemy.core.getBlock(mid);
+        const block = await alchemy.core.getBlockByNumber(mid);
 
         if (block.timestamp === targetTimestamp) {
             return mid;

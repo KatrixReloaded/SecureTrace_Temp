@@ -134,6 +134,11 @@ async function scrapeFromMultipleExplorers(urls) {
         'https://arbiscan.io/tokens?ps=100&p=2',
         'https://arbiscan.io/tokens?ps=100&p=3',
         'https://arbiscan.io/tokens?ps=100&p=4',
+        'https://basescan.org/tokens',
+        'https://basescan.org/tokens?ps=100&p=2',
+        'https://basescan.org/tokens?ps=100&p=3',
+        'https://basescan.org/tokens?ps=100&p=4',
+        'https://basescan.org/tokens?ps=100&p=5'
     ];
 
     await scrapeFromMultipleExplorers(explorerUrls);

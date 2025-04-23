@@ -66,6 +66,10 @@ const settingsZksync = {
     apiKey: process.env.ALCHEMY_APIKEY,
     network: Network.ZKSYNC_MAINNET, 
 };
+const settingsBase = {
+    apiKey: process.env.ALCHEMY_APIKEY,
+    network: Network.BASE_MAINNET,
+}
 
 const ERC20_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const ERC20_ABI = [
@@ -1096,6 +1100,13 @@ app.post('/fetch-transaction-details', async (req, res) => {
         if(blastTransfers !== 0) {
             blastTransfers = addChainNameToTransfers(blastTransfers, 'blast');
             res.json({ transfers: blastTransfers, });
+            return;
+        }
+
+        let baseTransfers = await fetchTokenTransfersFromTx(txhash, settingsBase);
+        if(baseTransfers !== 0) {
+            baseTransfers = addChainNameToTransfers(baseTransfers, 'base');
+            res.json({ transfers: baseTransfers, });
             return;
         }
 
