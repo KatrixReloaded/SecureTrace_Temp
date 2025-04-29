@@ -78,11 +78,16 @@ async function scrapeFromMultipleExplorers(urls) {
         await connection.beginTransaction();
         
         // Insert tokens into TempTokens table
-        const insertQuery = `INSERT IGNORE INTO TempTokens (name, symbol, address, logoURL, chain) VALUES (?, ?, ?, ?, ?)`;
+        const insertQuery = `INSERT IGNORE INTO TempTokens (name, symbol, address, logoURL, chain, decimals, price) VALUES (?, ?, ?, ?, ?, ?, ?)`;
+        const price = null;
+        const decimals = null;
         
         for (const token of allTokens) {
-            await connection.query(insertQuery, [token.name, token.symbol, token.address, token.logo, token.chain]);
+            await connection.query(insertQuery, [token.name, token.symbol, token.address, token.logo, token.chain, decimals, price]);
+            console.log(token);
         }
+
+        await connection.commit();
 
         console.log('All tokens successfully stored in TempTokens!');
     } catch (error) {
@@ -138,7 +143,9 @@ async function scrapeFromMultipleExplorers(urls) {
         'https://basescan.org/tokens?ps=100&p=2',
         'https://basescan.org/tokens?ps=100&p=3',
         'https://basescan.org/tokens?ps=100&p=4',
-        'https://basescan.org/tokens?ps=100&p=5'
+        'https://basescan.org/tokens?ps=100&p=5',
+        'https://bscscan.com/tokens?ps=100&p=1',
+        'https://bscscan.com/tokens?ps=100&p=2',
     ];
 
     await scrapeFromMultipleExplorers(explorerUrls);

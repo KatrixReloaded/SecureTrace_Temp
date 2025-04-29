@@ -267,4 +267,4 @@ async function fetchAndUpdateTokenLogos() {
 }
 
 // Call the function to fetch and update token logos
-fetchAndUpdateTokenLogos();
+fetchPrices();
