@@ -971,6 +971,15 @@ async function fetchTokenTransfersFromTx(txHash, settings) {
                 tokenAddress: null,
                 tokenPrice: nativeTokenPrices['coingecko:matic-network'].price,
                 blockNum: blockNumHex
+            } : tx.asset === "BNB" ? {
+                from: tx.from,
+                to: tx.to,
+                value: ethers.formatEther(tx.value._hex),
+                tokenName: "Binance",
+                tokenSymbol: "BNB",
+                tokenAddress: null,
+                tokenPrice: nativeTokenPrices['coingecko:binance'].price,
+                blockNum: blockNumHex
             } : {
                 from: tx.from,
                 to: tx.to,
