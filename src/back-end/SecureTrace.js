@@ -70,6 +70,10 @@ const settingsBase = {
     apiKey: process.env.ALCHEMY_APIKEY,
     network: Network.BASE_MAINNET,
 }
+const settingsBnb = {
+    apiKey: process.env.ALCHEMY_APIKEY,
+    network: Network.BNB_MAINNET
+}
 
 const ERC20_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const ERC20_ABI = [
@@ -1103,10 +1107,18 @@ app.post('/fetch-transaction-details', async (req, res) => {
             return;
         }
 
+        console.log("Fetching internal transfers for Base");
         let baseTransfers = await fetchTokenTransfersFromTx(txhash, settingsBase);
         if(baseTransfers !== 0) {
             baseTransfers = addChainNameToTransfers(baseTransfers, 'base');
             res.json({ transfers: baseTransfers, });
+            return;
+        }
+        console.log("Fetching internal transfers for BSC");
+        let bnbTransfers = await fetchTokenTransfersFromTx(txhash, settingsBnb);
+        if(bnbTransfers !== 0) {
+            baseTransfers = addChainNameToTransfers(bnbTransfers, 'bsc');
+            res.json({ transfers: bnbTransfers, });
             return;
         }
 
